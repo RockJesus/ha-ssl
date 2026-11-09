@@ -1,0 +1,72 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up ACME certificate",
+        "description": "Issues and renews a certificate through Aliyun DNS (dns-01).\nProduction: {production}\nStaging: {staging}\nThe AccessKey is stored locally; use a sub-account limited to DNS permissions.",
+        "data": {
+          "domain": "Domain (for example home.example.com)",
+          "email": "Contact email",
+          "access_key_id": "Aliyun AccessKey ID",
+          "access_key_secret": "Aliyun AccessKey Secret",
+          "cert_dir": "Certificate output directory",
+          "staging": "Use the Let's Encrypt staging environment"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid Aliyun credentials or the domain is not in this account",
+      "cannot_connect": "Cannot reach the Aliyun DNS API"
+    },
+    "abort": {
+      "already_configured": "This domain is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Renewal options",
+        "data": {
+          "auto_renew": "Automatic renewal",
+          "renew_days": "Renew this many days before expiry",
+          "restart_after_renew": "Restart Home Assistant after a successful renewal"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "expiry": {
+        "name": "Certificate expiry"
+      },
+      "days_left": {
+        "name": "Certificate days left"
+      }
+    },
+    "binary_sensor": {
+      "problem": {
+        "name": "Certificate problem"
+      }
+    },
+    "button": {
+      "issue": {
+        "name": "Issue now"
+      }
+    },
+    "switch": {
+      "auto_renew": {
+        "name": "Automatic renewal"
+      }
+    }
+  },
+  "services": {
+    "renew": {
+      "name": "Issue or renew now",
+      "description": "Run one dns-01 issuance and write the certificate to the output directory."
+    },
+    "configure_https": {
+      "name": "Write HTTPS config and restart",
+      "description": "Insert ssl_certificate / ssl_key into configuration.yaml (with a backup) and restart Home Assistant."
+    }
+  }
+}

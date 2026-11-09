@@ -1,0 +1,78 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "配置 ACME 证书",
+        "description": "使用阿里云 DNS 解析完成 dns-01 验证并自动签发/续期证书。\n生产环境: {production}\n测试环境: {staging}\nAccessKey 只保存在本地配置中，建议使用仅有 DNS 解析权限的子账号。",
+        "data": {
+          "domain": "域名（例如 home.example.com）",
+          "email": "联系邮箱（证书到期通知）",
+          "access_key_id": "阿里云 AccessKey ID",
+          "access_key_secret": "阿里云 AccessKey Secret",
+          "cert_dir": "证书输出目录",
+          "staging": "使用 Let's Encrypt 测试环境"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "阿里云凭据无效，或该账号下没有这个域名",
+      "cannot_connect": "无法连接阿里云 DNS 接口，请检查网络"
+    },
+    "abort": {
+      "already_configured": "该域名已经配置过了"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "续期设置",
+        "data": {
+          "auto_renew": "自动续期",
+          "renew_days": "提前多少天续期",
+          "restart_after_renew": "续期成功后自动重启 Home Assistant"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "expiry": {
+        "name": "证书到期时间"
+      },
+      "days_left": {
+        "name": "证书剩余天数"
+      }
+    },
+    "binary_sensor": {
+      "problem": {
+        "name": "证书异常"
+      }
+    },
+    "button": {
+      "issue": {
+        "name": "立即签发"
+      }
+    },
+    "switch": {
+      "auto_renew": {
+        "name": "自动续期"
+      }
+    }
+  },
+  "services": {
+    "renew": {
+      "name": "立即签发/续期",
+      "description": "立刻执行一次 ACME dns-01 签发，成功后把证书写入配置目录。"
+    },
+    "configure_https": {
+      "name": "写入 HTTPS 配置并重启",
+      "description": "把 ssl_certificate / ssl_key 写入 configuration.yaml（自动备份），随后重启 Home Assistant 使 HTTPS 生效。",
+      "fields": {
+        "restart": {
+          "name": "自动重启",
+          "description": "写入成功后是否立刻重启 Home Assistant。"
+        }
+      }
+    }
+  }
+}

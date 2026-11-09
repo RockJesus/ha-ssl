@@ -1,0 +1,15 @@
+renew:
+  name: 立即签发/续期
+  description: 立刻执行一次 ACME dns-01 签发，成功后把证书写入配置目录。
+
+configure_https:
+  name: 写入 HTTPS 配置并重启
+  description: 把 ssl_certificate / ssl_key 写入 configuration.yaml（自动备份），随后重启 Home Assistant 使 HTTPS 生效。
+  fields:
+    restart:
+      name: 自动重启
+      description: 写入成功后是否立刻重启 Home Assistant。
+      default: true
+      example: true
+      selector:
+        boolean:
