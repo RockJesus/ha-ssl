@@ -14,10 +14,16 @@ _LOGGER = logging.getLogger(__name__)
 class DnsProviderError(Exception):
     """Raised when a DNS provider rejects a call or lacks the zone."""
 
-    def __init__(self, message: str, payload: dict[str, Any] | None = None) -> None:
-        """Store the raw payload for diagnostics."""
+    def __init__(
+        self,
+        message: str,
+        payload: dict[str, Any] | None = None,
+        code: str | None = None,
+    ) -> None:
+        """Store the raw payload and vendor error code for diagnostics."""
         super().__init__(message)
         self.payload = payload or {}
+        self.code = code
 
 
 class DnsProvider(ABC):

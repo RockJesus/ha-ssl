@@ -21,6 +21,43 @@ import aiohttp
 from ..const import ALIYUN_API_TIMEOUT, ALIYUN_DNS_ENDPOINT, ALIYUN_DNS_VERSION
 from .base import DnsProvider, DnsProviderError
 
+# 严格按错误码判定，不用子串匹配：InvalidAccessKeyId.NotFound 也含 NotFound，
+# 直接匹配会把凭据错误误当成“域名不存在”，一路 continue 后报出误导性的错误。
+DOMAIN_MISSING_CODES = {
+    "domainnotfound",
+    "domainnotexist",
+    "domainnamenoexist",
+    "invaliddomainname.noexist",
+    "alirs.domain.domainnotexists",
+}
+RECORD_MISSING_CODES = {
+    "domainrecordnotexist",
+    "domainrecordnotbelongtouser",
+    "invalidrecordid.notfound",
+    "domainrecordnotfound",
+}
+DUPLICATE_CODES = {"domainrecordduplicate", "domainrecordexists"}
+
+
+def _code(err: DnsProviderError) -> str:
+    """Lower-cased vendor error code."""
+    return (err.code or "").strip().lower()
+
+
+def _is_domain_missing(err: DnsProviderError) -> bool:
+    """Whether the vendor error means this account has no such domain."""
+    return _code(err) in DOMAIN_MISSING_CODES
+
+
+def _is_record_missing(err: DnsProviderError) -> bool:
+    """Whether the vendor error means the record is already gone."""
+    return _code(err) in RECORD_MISSING_CODES
+
+
+def _is_duplicate(err: DnsProviderError) -> bool:
+    """Whether the vendor error means the record already exists."""
+    return _code(err) in DUPLICATE_CODES
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -101,7 +138,10 @@ class AliyunProvider(DnsProvider):
                 or payload.get("Recommend")
                 or f"HTTP {resp.status}"
             )
-            raise DnsProviderError(f"阿里云 DNS 接口报错：{message}", payload)
+            code = str(payload.get("Code") or "")
+            raise DnsProviderError(
+                f"阿里云 DNS 接口报错（{code or resp.status}）：{message}", payload, code
+            )
 
         return payload
 
@@ -115,9 +155,12 @@ class AliyunProvider(DnsProvider):
                     "DescribeDomainRecords",
                     {"DomainName": candidate, "PageSize": "1"},
                 )
-            except DnsProviderError:
-                continue
-            if "PageNumber" in payload or "TotalCount" in payload:
+            except DnsProviderError as err:
+                # 只有“域名不存在”才继续往上找，签名/凭据/权限错误必须直接暴露
+                if _is_domain_missing(err):
+                    continue
+                raise
+            if "TotalCount" in payload or "PageNumber" in payload or "DomainRecords" in payload:
                 relative = ".".join(labels[:index]) if index else ""
                 return candidate, relative
 
@@ -127,16 +170,24 @@ class AliyunProvider(DnsProvider):
 
     async def async_add_txt(self, zone: str, rr: str, value: str, ttl: int = 600) -> str:
         """Create a TXT record and return its RecordId."""
-        payload = await self._async_request(
-            "AddDomainRecord",
-            {
-                "DomainName": zone,
-                "RR": rr,
-                "Type": "TXT",
-                "Value": value,
-                "TTL": str(ttl),
-            },
-        )
+        try:
+            payload = await self._async_request(
+                "AddDomainRecord",
+                {
+                    "DomainName": zone,
+                    "RR": rr,
+                    "Type": "TXT",
+                    "Value": value,
+                    "TTL": str(max(600, ttl)),
+                },
+            )
+        except DnsProviderError as err:
+            if not _is_duplicate(err):
+                raise
+            for handle in await self.async_list_txt(zone, rr, value):
+                return handle
+            raise
+
         record_id = payload.get("RecordId")
         if not record_id:
             raise DnsProviderError("创建 TXT 记录失败：响应缺少 RecordId", payload)
@@ -147,13 +198,15 @@ class AliyunProvider(DnsProvider):
         try:
             await self._async_request("DeleteDomainRecord", {"RecordId": handle})
         except DnsProviderError as err:
-            if "RecordId" in str(err) or "not exist" in str(err).lower():
+            if _is_record_missing(err):
                 _LOGGER.debug("TXT 记录已不存在，无需删除：%s", handle)
                 return
             raise
 
-    async def async_list_txt(self, zone: str, rr: str) -> list[str]:
-        """List TXT records at a relative name."""
+    async def async_list_txt(
+        self, zone: str, rr: str, value: str | None = None
+    ) -> list[str]:
+        """List TXT records at a relative name, optionally filtered by value."""
         payload = await self._async_request(
             "DescribeDomainRecords",
             {
@@ -167,5 +220,8 @@ class AliyunProvider(DnsProvider):
         return [
             str(item.get("RecordId"))
             for item in records
-            if item.get("RR") == rr and item.get("RecordId")
+            if item.get("RR") == rr
+            and item.get("Type", "TXT") == "TXT"
+            and item.get("RecordId")
+            and (value is None or item.get("Value") == value)
         ]

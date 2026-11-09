@@ -1,4 +1,4 @@
-"""Cloudflare DNS provider (API Token, dns_records scope)."""
+"""Cloudflare DNS provider (API Token with Zone.DNS edit)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,12 @@ from ..const import CLOUDFLARE_API_BASE, PROVIDER_API_TIMEOUT
 from .base import DnsProvider, DnsProviderError
 
 _LOGGER = logging.getLogger(__name__)
+
+# Cloudflare 要求 /zones 的 per_page 在 5~50 之间
+ZONE_PAGE_SIZE = 5
+RECORD_PAGE_SIZE = 100
+MAX_PAGES = 10
+RECORD_NOT_FOUND = "81044"
 
 
 class CloudflareProvider(DnsProvider):
@@ -43,34 +49,45 @@ class CloudflareProvider(DnsProvider):
         if status >= 400 or not payload.get("success"):
             errors = payload.get("errors") or []
             message = "; ".join(str(item.get("message", "")) for item in errors)
+            code = str(errors[0].get("code")) if errors and errors[0].get("code") else None
             raise DnsProviderError(
-                f"Cloudflare 接口报错：{message or f'HTTP {status}'}", payload
+                f"Cloudflare 接口报错（{code or status}）：{message or '请求失败'}",
+                payload,
+                code,
             )
         return payload
 
+    async def _async_zone(self, zone: str) -> dict[str, Any] | None:
+        """Look up a zone by its exact name."""
+        payload = await self._async_request(
+            "GET", "/zones", params={"name": zone, "per_page": ZONE_PAGE_SIZE}
+        )
+        for item in payload.get("result") or []:
+            if str(item.get("name", "")).lower() == zone.lower():
+                return item
+        return None
+
     async def _async_zone_id(self, zone: str) -> str:
         """Resolve the zone id for an exact zone name."""
-        payload = await self._async_request(
-            "GET", "/zones", params={"name": zone, "per_page": 1}
-        )
-        result = payload.get("result") or []
-        if not result:
+        item = await self._async_zone(zone)
+        if item is None:
             raise DnsProviderError(f"Cloudflare 账号里没有域名 {zone}")
-        return str(result[0]["id"])
+        return str(item["id"])
 
     async def async_find_zone(self, fqdn: str) -> tuple[str, str]:
         """Ask Cloudflare which zone owns the name."""
-        for candidate, index in self._zone_candidates(fqdn):
+        labels = fqdn.strip().rstrip(".").split(".")
+        for index in range(0, len(labels) - 1):
+            candidate = ".".join(labels[index:])
             try:
-                payload = await self._async_request(
-                    "GET", "/zones", params={"name": candidate, "per_page": 1}
-                )
-            except DnsProviderError:
-                continue
-            result = payload.get("result") or []
-            if result:
-                relative = ".".join(fqdn.strip().rstrip(".").split(".")[:index]) if index else ""
-                return str(result[0]["name"]), relative
+                item = await self._async_zone(candidate)
+            except DnsProviderError as err:
+                if err.code in {"1000", "10000"}:
+                    continue
+                raise
+            if item is not None:
+                relative = ".".join(labels[:index]) if index else ""
+                return str(item["name"]), relative
 
         raise DnsProviderError(
             f"在 Cloudflare 账号里找不到 {fqdn} 所属的域名，请确认 API Token 有该域名的 DNS 编辑权限"
@@ -87,7 +104,7 @@ class CloudflareProvider(DnsProvider):
                 "type": "TXT",
                 "name": name,
                 "content": value,
-                "ttl": 120,
+                "ttl": max(60, ttl),
                 "comment": "acme dns-01",
             },
         )
@@ -108,22 +125,39 @@ class CloudflareProvider(DnsProvider):
                 "DELETE", f"/zones/{zone_id}/dns_records/{record_id}"
             )
         except DnsProviderError as err:
-            if "not found" in str(err).lower() or "81044" in str(err):
+            if err.code == RECORD_NOT_FOUND or "does not exist" in str(err).lower():
                 _LOGGER.debug("TXT 记录已不存在，无需删除：%s", record_id)
                 return
             raise
 
     async def async_list_txt(self, zone: str, rr: str) -> list[str]:
-        """List TXT records at a relative name."""
+        """List TXT records at a relative name by filtering locally.
+
+        dns_records 的 name 查询参数已经是对象过滤器（exact/contains/...），
+        这里按类型取回再在本地比对完整名称，避免依赖查询参数的语义。
+        """
         zone_id = await self._async_zone_id(zone)
-        name = f"{rr}.{zone}" if rr else zone
-        payload = await self._async_request(
-            "GET",
-            f"/zones/{zone_id}/dns_records",
-            params={"type": "TXT", "name": name, "per_page": 100},
-        )
-        return [
-            f"{zone_id}|{item.get('id')}"
-            for item in payload.get("result") or []
-            if item.get("id")
-        ]
+        target = (f"{rr}.{zone}" if rr else zone).lower()
+        handles: list[str] = []
+
+        page = 1
+        while page <= MAX_PAGES:
+            payload = await self._async_request(
+                "GET",
+                f"/zones/{zone_id}/dns_records",
+                params={"type": "TXT", "page": page, "per_page": RECORD_PAGE_SIZE},
+            )
+            for item in payload.get("result") or []:
+                if (
+                    str(item.get("name", "")).lower().rstrip(".") == target
+                    and item.get("id")
+                ):
+                    handles.append(f"{zone_id}|{item['id']}")
+
+            info = payload.get("result_info") or {}
+            total_pages = int(info.get("total_pages") or 1)
+            if page >= total_pages:
+                break
+            page += 1
+
+        return handles

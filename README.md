@@ -50,8 +50,10 @@ HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https:
 | 服务商 | 需要的字段 | 权限要求 |
 |---|---|---|
 | 阿里云云解析 | AccessKey ID + Secret | 子账号至少 `AliyunDNSFullAccess`，或该域名的解析读写 |
-| 腾讯云 DNSPod | Token ID + Token | 控制台「密钥管理」生成的 API Token，需能管理该域名 |
-| Cloudflare | API Token | 模板 Edit zone DNS（Zone.DNS 编辑权限） |
+| 腾讯云 DNSPod | Token ID + Token | 控制台「密钥管理」生成的 API Token，需能管理该域名；传统 API 只支持**主账号** Token |
+| Cloudflare | API Token | 模板 Edit zone DNS（Zone.DNS 编辑权限），只勾该域名的 zone 即可 |
+
+三家在实现上都遵守各自 SDK 的硬约束：阿里云走 RPC HMAC-SHA1 签名，TXT TTL 不低于 600 秒；DNSPod 用 `login_token=ID,Token` 表单提交，`record_line` 固定走默认线路，TTL 不低于 600 秒，并把「空结果」和「记录已存在」当作正常状态处理；Cloudflare 用 Bearer Token，`/zones` 的 `per_page` 按规范取 5，TXT 记录按类型分页拉取后本地精确比对名称（`name` 参数已是对象过滤器），删除返回 81044 视为已不存在。
 
 不需要填邮箱：ACME 账号本身不要求联系人，Let's Encrypt 的到期通知在证书自动续期的前提下也用不上。
 
@@ -117,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.8：按各家 SDK 规范校正三处实现——DNSPod 的「空结果」「记录已存在」不再当成错误，列表按 name/type 过滤并分页；Cloudflare 的 `/zones` 改为 `per_page=5`（规范下限），记录列表改为按类型分页 + 本地精确比对，删除 81044 幂等；阿里云只在明确的「域名不存在」错误码时继续向上找 zone，凭据/签名/权限错误直接暴露
 - v1.0.7：支持多 DNS 服务商（阿里云云解析 / 腾讯云 DNSPod / Cloudflare），配置改为「先选服务商、再填凭据」两段式；去掉邮箱字段（ACME 账号不要求联系人）
 - v1.0.6：补 manifest `categories`（`computers_network`）、iot_class 修正为 `cloud_polling`、品牌图补齐深色主题（icon/logo 各 2 种主题共 8 个文件）
 - v1.0.5：补齐品牌图 `custom_components/ha_ssl/brand/`（icon/logo 各含 @2x），仓库补 topics，HACS Action 校验转绿
