@@ -5,10 +5,10 @@
     "@RockJesus"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/RockJesus/ha-acme-cert",
+  "documentation": "https://github.com/RockJesus/ha-ssl",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/RockJesus/ha-acme-cert/issues",
+  "issue_tracker": "https://github.com/RockJesus/ha-ssl/issues",
   "requirements": [],
-  "version": "1.0.1"
+  "version": "1.0.2"
 }

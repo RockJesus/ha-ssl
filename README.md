@@ -24,7 +24,7 @@
 
 ## 安装
 
-HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https://github.com/RockJesus/ha-acme-cert`（类别选 Integration）→ 安装 → 重启 HA。
+HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https://github.com/RockJesus/ha-ssl`（类别选 Integration）→ 安装 → 重启 HA。
 
 或手动放到 `config/custom_components/acme_cert/` 后重启。
 
@@ -76,6 +76,7 @@ data:
 
 ## 版本
 
+- v1.0.2：仓库与项目整体更名为 ha-ssl（domain 仍为 `acme_cert`，实体不变）
 - v1.0.1：集成显示名改为 HA SSL（domain 仍为 `acme_cert`，实体不变）
 - v1.0.0：首个版本，支持阿里云 dns-01 签发、自动续期、到期实体与 HTTPS 配置服务。
 
