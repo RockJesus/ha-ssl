@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "配置 ACME 证书",
+        "title": "配置 HA SSL",
         "description": "使用阿里云 DNS 解析完成 dns-01 验证并自动签发/续期证书。\n生产环境: {production}\n测试环境: {staging}\nAccessKey 只保存在本地配置中，建议使用仅有 DNS 解析权限的子账号。",
         "data": {
           "domain": "域名（例如 home.example.com）",

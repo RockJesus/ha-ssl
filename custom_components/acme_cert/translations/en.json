@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up ACME certificate",
+        "title": "Set up HA SSL",
         "description": "Issues and renews a certificate through Aliyun DNS (dns-01).\nProduction: {production}\nStaging: {staging}\nThe AccessKey is stored locally; use a sub-account limited to DNS permissions.",
         "data": {
           "domain": "Domain (for example home.example.com)",

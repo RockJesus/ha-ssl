@@ -46,7 +46,7 @@ class _CertBaseEntity(CoordinatorEntity[AcmeCertCoordinator]):
         self._domain = coordinator.manager.domain
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
-            name=f"ACME 证书 · {self._domain}",
+            name=f"HA SSL · {self._domain}",
             manufacturer=MANUFACTURER,
             model=f"DNS-01 · {self._domain}",
         )

@@ -1,4 +1,4 @@
-# ACME 证书（Home Assistant 自定义集成）
+# HA SSL（Home Assistant 自定义集成）
 
 在 Home Assistant 内部完成 **Let's Encrypt 证书签发与自动续期**，用阿里云 DNS 做 dns-01 验证。
 不依赖 HA 官方 Let's Encrypt 加载项，也不依赖宿主机 DNS 解析器（DNS 记录通过阿里云 API 写入，生效检查走公共 DoH 解析器）。
@@ -30,7 +30,7 @@ HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https:
 
 ## 配置
 
-设置 → 设备与服务 → 添加集成 → **ACME 证书**：
+设置 → 设备与服务 → 添加集成 → **HA SSL**：
 
 | 字段 | 说明 |
 |---|---|
@@ -76,6 +76,7 @@ data:
 
 ## 版本
 
+- v1.0.1：集成显示名改为 HA SSL（domain 仍为 `acme_cert`，实体不变）
 - v1.0.0：首个版本，支持阿里云 dns-01 签发、自动续期、到期实体与 HTTPS 配置服务。
 
 ## 许可
