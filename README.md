@@ -88,6 +88,8 @@ data:
 | HACS Action | HACS 发布物校验：仓库结构、`hacs.json`、集成元数据 |
 | Privacy Scan | 自写脱敏扫描：工作区与**完整 git 历史**一起查，命中即红 |
 
+发布物结构符合官方规范：`manifest.json` 键按字母序、`custom_components/ha_ssl/brand/` 提供亮/暗 8 个品牌图、`translations/` 中英齐全、`services.yaml` 与 `strings.json` 保持一致。
+
 脱敏扫描本地也能跑：
 
 ```bash
@@ -103,6 +105,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.6：补 manifest `categories`（`computers_network`）、iot_class 修正为 `cloud_polling`、品牌图补齐深色主题（icon/logo 各 2 种主题共 8 个文件）
 - v1.0.5：补齐品牌图 `custom_components/ha_ssl/brand/`（icon/logo 各含 @2x），仓库补 topics，HACS Action 校验转绿
 - v1.0.4：加入 Hassfest / HACS Action / Privacy Scan 三个 CI 工作流与脱敏脚本 `scripts/check_privacy.py`
 - v1.0.3：集成代码目录与 domain 一并改为 `ha_ssl`（`custom_components/ha_ssl`），服务名变为 `ha_ssl.renew` / `ha_ssl.configure_https`，账户密钥目录改为 `/config/ha_ssl`
