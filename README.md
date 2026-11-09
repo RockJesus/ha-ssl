@@ -103,6 +103,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.5：补齐品牌图 `custom_components/ha_ssl/brand/`（icon/logo 各含 @2x），仓库补 topics，HACS Action 校验转绿
 - v1.0.4：加入 Hassfest / HACS Action / Privacy Scan 三个 CI 工作流与脱敏脚本 `scripts/check_privacy.py`
 - v1.0.3：集成代码目录与 domain 一并改为 `ha_ssl`（`custom_components/ha_ssl`），服务名变为 `ha_ssl.renew` / `ha_ssl.configure_https`，账户密钥目录改为 `/config/ha_ssl`
 - v1.0.2：仓库与项目整体更名为 ha-ssl
