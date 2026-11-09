@@ -1,5 +1,9 @@
 # HA SSL（Home Assistant 自定义集成）
 
+[![Hassfest](https://github.com/RockJesus/ha-ssl/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/hassfest.yml)
+[![HACS Action](https://github.com/RockJesus/ha-ssl/actions/workflows/hacs.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/hacs.yml)
+[![Privacy Scan](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml)
+
 在 Home Assistant 内部完成 **Let's Encrypt 证书签发与自动续期**，用阿里云 DNS 做 dns-01 验证。
 不依赖 HA 官方 Let's Encrypt 加载项，也不依赖宿主机 DNS 解析器（DNS 记录通过阿里云 API 写入，生效检查走公共 DoH 解析器）。
 
@@ -74,8 +78,32 @@ data:
 - 8123 启用 TLS 后明文 `http://` 立即失效；家里 Wi-Fi 访问同一域名需要路由器支持 NAT 回环（hairpin），否则内网改用 IP + 例外配置。
 - 阿里云 AccessKey 保存在 HA 的配置条目中（`.storage`），建议使用最小权限子账号并定期轮换。
 
+## 开发与发布
+
+仓库按 HA 官方自定义集成规范维护，CI 三项检查：
+
+| 工作流 | 作用 |
+|---|---|
+| Hassfest | 官方集成校验：manifest 字段与键序、文件结构、翻译 key、services 定义 |
+| HACS Action | HACS 发布物校验：仓库结构、`hacs.json`、集成元数据 |
+| Privacy Scan | 自写脱敏扫描：工作区与**完整 git 历史**一起查，命中即红 |
+
+脱敏扫描本地也能跑：
+
+```bash
+python3 scripts/check_privacy.py            # 只查工作区
+python3 scripts/check_privacy.py --history  # 连 git 历史一起查
+```
+
+检查项：邮箱、公网 IP、JWT、阿里云 AccessKey（`LTAI` 前缀）、手机号、VIN、以及不在白名单里的域名。
+输出一律打码（公开仓库的 Actions 日志本身也是公开的），文档统一用 `example.com` 这类占位域名；
+历史里发现残留用 `git filter-repo --replace-text` 重写，改完 force push。
+
+发布纪律：`manifest.json` 的 `version` 与 tag 同步递增、tag 指向最新 main、Release 不放 zip asset（HACS 走归档模式）、全文件 UTF-8 无 BOM。
+
 ## 版本
 
+- v1.0.4：加入 Hassfest / HACS Action / Privacy Scan 三个 CI 工作流与脱敏脚本 `scripts/check_privacy.py`
 - v1.0.3：集成代码目录与 domain 一并改为 `ha_ssl`（`custom_components/ha_ssl`），服务名变为 `ha_ssl.renew` / `ha_ssl.configure_https`，账户密钥目录改为 `/config/ha_ssl`
 - v1.0.2：仓库与项目整体更名为 ha-ssl
 - v1.0.1：集成显示名改为 HA SSL（domain 仍为 `acme_cert`，实体不变）

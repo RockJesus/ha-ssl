@@ -1,0 +1,21 @@
+name: Privacy Scan
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    name: No personal data in repo or history
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan working tree and git history
+        run: python3 scripts/check_privacy.py --history
