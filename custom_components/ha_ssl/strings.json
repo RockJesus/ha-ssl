@@ -3,20 +3,29 @@
     "step": {
       "user": {
         "title": "配置 HA SSL",
-        "description": "使用阿里云 DNS 解析完成 dns-01 验证并自动签发/续期证书。\n生产环境: {production}\n测试环境: {staging}\nAccessKey 只保存在本地配置中，建议使用仅有 DNS 解析权限的子账号。",
+        "description": "选择 DNS 服务商并填写要签发证书的域名。凭据只保存在本地配置中，建议使用仅有 DNS 解析权限的子账号或最小权限 API 令牌。\n生产环境: {production}\n测试环境: {staging}",
         "data": {
+          "provider": "DNS 服务商",
           "domain": "域名（例如 home.example.com）",
-          "email": "联系邮箱（证书到期通知）",
-          "access_key_id": "阿里云 AccessKey ID",
-          "access_key_secret": "阿里云 AccessKey Secret",
           "cert_dir": "证书输出目录",
           "staging": "使用 Let's Encrypt 测试环境"
+        }
+      },
+      "credentials": {
+        "title": "填写凭据（{provider}）",
+        "description": "保存时会调用 {provider} 接口校验凭据，并确认该域名归属。",
+        "data": {
+          "aliyun_access_key_id": "阿里云 AccessKey ID",
+          "aliyun_access_key_secret": "阿里云 AccessKey Secret",
+          "dnspod_token_id": "DNSPod Token ID",
+          "dnspod_token": "DNSPod Token",
+          "cloudflare_api_token": "Cloudflare API Token（需 Zone.DNS 编辑权限）"
         }
       }
     },
     "error": {
-      "invalid_auth": "阿里云凭据无效，或该账号下没有这个域名",
-      "cannot_connect": "无法连接阿里云 DNS 接口，请检查网络"
+      "invalid_auth": "服务商凭据无效，或该账号下没有这个域名",
+      "cannot_connect": "无法连接服务商接口，请检查网络"
     },
     "abort": {
       "already_configured": "该域名已经配置过了"

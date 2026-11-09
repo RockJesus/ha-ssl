@@ -16,8 +16,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .cert_manager import CertInfo
-from .const import DOMAIN, MANUFACTURER
+from .const import CONF_PROVIDER, DOMAIN, MANUFACTURER
 from .coordinator import AcmeCertCoordinator
+from .providers import PROVIDER_CLASSES
 
 
 async def async_setup_entry(
@@ -44,11 +45,13 @@ class _CertBaseEntity(CoordinatorEntity[AcmeCertCoordinator]):
         """Initialize the entity."""
         super().__init__(coordinator)
         self._domain = coordinator.manager.domain
+        self._provider = str(coordinator.entry.data.get(CONF_PROVIDER) or "")
+        provider_label = PROVIDER_CLASSES.get(self._provider, self._provider)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
             name=f"HA SSL · {self._domain}",
             manufacturer=MANUFACTURER,
-            model=f"DNS-01 · {self._domain}",
+            model=f"DNS-01 · {provider_label}",
         )
 
     @property
@@ -62,6 +65,7 @@ class _CertBaseEntity(CoordinatorEntity[AcmeCertCoordinator]):
         info = self.info
         return {
             "domain": self._domain,
+            "dns_provider": PROVIDER_CLASSES.get(self._provider, self._provider),
             "cert_file": info.path,
             "issuer": info.issuer or None,
             "subject": info.subject or None,

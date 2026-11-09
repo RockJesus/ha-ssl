@@ -28,10 +28,9 @@ from .const import (
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
     CERT_FILE_NAME,
-    CONF_ACCESS_KEY_ID,
-    CONF_ACCESS_KEY_SECRET,
     CONF_CERT_DIR,
     CONF_DOMAIN,
+    CONF_PROVIDER,
     CONF_STAGING,
     DEFAULT_CERT_DIR,
     DEFAULT_WAIT_TIMEOUT,
@@ -39,7 +38,7 @@ from .const import (
     KEY_FILE_NAME,
     STATE_FILE,
 )
-from .dns_aliyun import AliyunDnsClient, AliyunDnsError
+from .providers import DnsProviderError, async_create_provider
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,8 +169,7 @@ class CertManager:
 
         async with self._lock:
             domain = self.domain
-            access_key_id = str(self.entry.data[CONF_ACCESS_KEY_ID])
-            access_key_secret = str(self.entry.data[CONF_ACCESS_KEY_SECRET])
+            provider_key = str(self.entry.data.get(CONF_PROVIDER) or "")
             directory = (
                 ACME_DIRECTORY_STAGING
                 if self.entry.data.get(CONF_STAGING)
@@ -187,12 +185,12 @@ class CertManager:
             )
 
             client = AcmeClient(session, directory, account_key)
-            ali = AliyunDnsClient(session, access_key_id, access_key_secret)
+            provider = async_create_provider(session, provider_key, dict(self.entry.data))
 
             try:
                 await client.async_initialize()
-                zone, relative = await ali.async_find_zone(domain)
-            except (AcmeError, AliyunDnsError) as err:
+                zone, relative = await provider.async_find_zone(domain)
+            except (AcmeError, DnsProviderError) as err:
                 self.last_error = str(err)
                 raise CertIssueError(str(err)) from err
 
@@ -201,27 +199,21 @@ class CertManager:
                 rr = f"{rr}.{relative}"
             fqdn = f"{rr}.{zone}"
 
-            record_id: list[str] = []
+            handles: list[str] = []
 
             async def prepare_txt(value: str) -> None:
                 """Create the challenge record and wait for it to go live."""
-                for record in await ali.async_list_txt(zone, rr):
-                    stale_id = str(record.get("RecordId", ""))
-                    if stale_id:
-                        try:
-                            await ali.async_delete_txt(stale_id)
-                        except AliyunDnsError:
-                            _LOGGER.debug("清理旧 TXT 记录失败：%s", stale_id)
-                record_id.append(await ali.async_add_txt(zone, rr, value))
+                await provider.async_clean_stale(zone, rr)
+                handles.append(await provider.async_add_txt(zone, rr, value))
                 await self._async_wait_txt(fqdn, value)
 
             async def cleanup_txt() -> None:
                 """Remove every challenge record this run created."""
-                while record_id:
-                    current = record_id.pop()
+                while handles:
+                    current = handles.pop()
                     try:
-                        await ali.async_delete_txt(current)
-                    except AliyunDnsError as err:
+                        await provider.async_delete_txt(current)
+                    except DnsProviderError as err:
                         _LOGGER.warning("删除 TXT 记录失败：%s", err)
 
             try:
@@ -230,7 +222,7 @@ class CertManager:
                 )
             except (
                 AcmeError,
-                AliyunDnsError,
+                DnsProviderError,
                 CertIssueError,
                 aiohttp.ClientError,
                 asyncio.TimeoutError,

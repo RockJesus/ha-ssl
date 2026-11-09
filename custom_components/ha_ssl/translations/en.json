@@ -3,20 +3,29 @@
     "step": {
       "user": {
         "title": "Set up HA SSL",
-        "description": "Issues and renews a certificate through Aliyun DNS (dns-01).\nProduction: {production}\nStaging: {staging}\nThe AccessKey is stored locally; use a sub-account limited to DNS permissions.",
+        "description": "Pick the DNS provider and the domain to certify. Credentials are stored locally; use a sub-account or API token limited to DNS permissions.\nProduction: {production}\nStaging: {staging}",
         "data": {
+          "provider": "DNS provider",
           "domain": "Domain (for example home.example.com)",
-          "email": "Contact email",
-          "access_key_id": "Aliyun AccessKey ID",
-          "access_key_secret": "Aliyun AccessKey Secret",
           "cert_dir": "Certificate output directory",
           "staging": "Use the Let's Encrypt staging environment"
+        }
+      },
+      "credentials": {
+        "title": "Credentials ({provider})",
+        "description": "Saving calls the {provider} API to verify the credentials and the domain ownership.",
+        "data": {
+          "aliyun_access_key_id": "Aliyun AccessKey ID",
+          "aliyun_access_key_secret": "Aliyun AccessKey Secret",
+          "dnspod_token_id": "DNSPod Token ID",
+          "dnspod_token": "DNSPod Token",
+          "cloudflare_api_token": "Cloudflare API Token (needs Zone.DNS edit)"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid Aliyun credentials or the domain is not in this account",
-      "cannot_connect": "Cannot reach the Aliyun DNS API"
+      "invalid_auth": "The provider rejected the credentials, or the account does not own this domain",
+      "cannot_connect": "Cannot reach the provider API, check the network"
     },
     "abort": {
       "already_configured": "This domain is already configured"
@@ -25,11 +34,11 @@
   "options": {
     "step": {
       "init": {
-        "title": "Renewal options",
+        "title": "Renewal settings",
         "data": {
           "auto_renew": "Automatic renewal",
-          "renew_days": "Renew this many days before expiry",
-          "restart_after_renew": "Restart Home Assistant after a successful renewal"
+          "renew_days": "Renew when fewer days remain",
+          "restart_after_renew": "Restart Home Assistant after renewal"
         }
       }
     }
@@ -40,7 +49,7 @@
         "name": "Certificate expiry"
       },
       "days_left": {
-        "name": "Certificate days left"
+        "name": "Days until expiry"
       }
     },
     "binary_sensor": {
@@ -62,11 +71,17 @@
   "services": {
     "renew": {
       "name": "Issue or renew now",
-      "description": "Run one dns-01 issuance and write the certificate to the output directory."
+      "description": "Run one ACME dns-01 issuance and write the certificate files."
     },
     "configure_https": {
-      "name": "Write HTTPS config and restart",
-      "description": "Insert ssl_certificate / ssl_key into configuration.yaml (with a backup) and restart Home Assistant."
+      "name": "Configure HTTPS and restart",
+      "description": "Write ssl_certificate / ssl_key into configuration.yaml (backup first) and restart Home Assistant.",
+      "fields": {
+        "restart": {
+          "name": "Restart automatically",
+          "description": "Restart Home Assistant right after writing the config."
+        }
+      }
     }
   }
 }

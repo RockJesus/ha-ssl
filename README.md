@@ -19,7 +19,7 @@
 
 ## 功能
 
-- 阿里云 DNS dns-01 签发，单域名证书
+- dns-01 签发，单域名证书；DNS 服务商可选 **阿里云云解析 / 腾讯云 DNSPod / Cloudflare**
 - 自动续期：默认证书剩余 ≤30 天时自动重签，可配置
 - 续期成功后可自动重启 HA 以加载新证书（HA 只在启动时读取证书）
 - 实体：证书到期时间、剩余天数、证书异常（problem）、立即签发按钮、自动续期开关
@@ -34,17 +34,28 @@ HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https:
 
 ## 配置
 
-设置 → 设备与服务 → 添加集成 → **HA SSL**：
+设置 → 设备与服务 → 添加集成 → **HA SSL**，分两步：
+
+**第 1 步：域名与服务商**
 
 | 字段 | 说明 |
 |---|---|
+| DNS 服务商 | 阿里云云解析 / 腾讯云 DNSPod / Cloudflare |
 | 域名 | 需要签发证书的完整域名，如 `home.example.com` |
-| 联系邮箱 | Let's Encrypt 到期通知邮箱 |
-| AccessKey ID / Secret | 阿里云子账号，至少具备 `AliyunDNSFullAccess`（或该域名的解析读写权限） |
 | 证书输出目录 | 默认 `/ssl`，也可是 `/config/ssl` |
 | 测试环境 | 先用 staging 验证，确认无误后删除重建走生产 |
 
-保存时会调用阿里云 API 校验凭据与该域名所属主域名，失败会提示 `invalid_auth`。
+**第 2 步：该服务商的凭据**
+
+| 服务商 | 需要的字段 | 权限要求 |
+|---|---|---|
+| 阿里云云解析 | AccessKey ID + Secret | 子账号至少 `AliyunDNSFullAccess`，或该域名的解析读写 |
+| 腾讯云 DNSPod | Token ID + Token | 控制台「密钥管理」生成的 API Token，需能管理该域名 |
+| Cloudflare | API Token | 模板 Edit zone DNS（Zone.DNS 编辑权限） |
+
+不需要填邮箱：ACME 账号本身不要求联系人，Let's Encrypt 的到期通知在证书自动续期的前提下也用不上。
+
+保存时会调用对应服务商 API 校验凭据并确认域名归属，失败提示 `invalid_auth`（凭据无效或账号里没有该域名）、`cannot_connect`（网络不通）。
 
 ## 启用 HTTPS
 
@@ -76,7 +87,8 @@ data:
 
 - 证书只对配置的单个域名有效，不支持泛域名。
 - 8123 启用 TLS 后明文 `http://` 立即失效；家里 Wi-Fi 访问同一域名需要路由器支持 NAT 回环（hairpin），否则内网改用 IP + 例外配置。
-- 阿里云 AccessKey 保存在 HA 的配置条目中（`.storage`），建议使用最小权限子账号并定期轮换。
+- 服务商凭据保存在 HA 的配置条目中（`.storage`），建议使用最小权限的子账号 / API Token 并定期轮换。
+- 三个服务商的 zone 定位都走服务商 API，不查宿主机 DNS，因此不受路由器或运营商 DNS 劫持影响。
 
 ## 开发与发布
 
@@ -105,6 +117,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.7：支持多 DNS 服务商（阿里云云解析 / 腾讯云 DNSPod / Cloudflare），配置改为「先选服务商、再填凭据」两段式；去掉邮箱字段（ACME 账号不要求联系人）
 - v1.0.6：补 manifest `categories`（`computers_network`）、iot_class 修正为 `cloud_polling`、品牌图补齐深色主题（icon/logo 各 2 种主题共 8 个文件）
 - v1.0.5：补齐品牌图 `custom_components/ha_ssl/brand/`（icon/logo 各含 @2x），仓库补 topics，HACS Action 校验转绿
 - v1.0.4：加入 Hassfest / HACS Action / Privacy Scan 三个 CI 工作流与脱敏脚本 `scripts/check_privacy.py`

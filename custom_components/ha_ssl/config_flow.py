@@ -1,4 +1,4 @@
-"""Config flow for the ACME certificate integration."""
+"""Config flow for the HA SSL integration."""
 
 from __future__ import annotations
 
@@ -15,12 +15,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
-    CONF_ACCESS_KEY_ID,
-    CONF_ACCESS_KEY_SECRET,
+    CONF_ALIYUN_ACCESS_KEY_ID,
+    CONF_ALIYUN_ACCESS_KEY_SECRET,
     CONF_AUTO_RENEW,
     CONF_CERT_DIR,
+    CONF_CLOUDFLARE_API_TOKEN,
+    CONF_DNSPOD_TOKEN,
+    CONF_DNSPOD_TOKEN_ID,
     CONF_DOMAIN,
-    CONF_EMAIL,
+    CONF_PROVIDER,
     CONF_RENEW_DAYS,
     CONF_RESTART_AFTER_RENEW,
     CONF_STAGING,
@@ -29,78 +32,118 @@ from .const import (
     DEFAULT_RENEW_DAYS,
     DEFAULT_RESTART_AFTER_RENEW,
     DOMAIN,
+    PROVIDER_ALIYUN,
+    PROVIDER_CLOUDFLARE,
+    PROVIDER_DNSPOD,
 )
-from .dns_aliyun import AliyunDnsClient, AliyunDnsError
+from .providers import PROVIDER_CLASSES, DnsProviderError, async_create_provider
 
 _LOGGER = logging.getLogger(__name__)
 
+CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
+    PROVIDER_ALIYUN: (CONF_ALIYUN_ACCESS_KEY_ID, CONF_ALIYUN_ACCESS_KEY_SECRET),
+    PROVIDER_DNSPOD: (CONF_DNSPOD_TOKEN_ID, CONF_DNSPOD_TOKEN),
+    PROVIDER_CLOUDFLARE: (CONF_CLOUDFLARE_API_TOKEN,),
+}
 
-async def _async_validate_user_input(
-    hass: HomeAssistant, user_input: dict[str, Any]
+
+async def _async_validate(
+    hass: HomeAssistant, provider: str, data: dict[str, Any], domain: str
 ) -> None:
-    """Validate the Aliyun credentials and the domain ownership."""
+    """Check the credentials and the domain ownership at the provider."""
     session = async_get_clientsession(hass)
-    client = AliyunDnsClient(
-        session,
-        str(user_input[CONF_ACCESS_KEY_ID]),
-        str(user_input[CONF_ACCESS_KEY_SECRET]),
-    )
-    await client.async_find_zone(str(user_input[CONF_DOMAIN]))
+    client = async_create_provider(session, provider, data)
+    await client.async_find_zone(domain)
 
 
-class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Ask for the domain, contact email and Aliyun credentials."""
+class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Collect the domain, then the credentials of the chosen DNS provider."""
 
     VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-
+        """Pick the provider and the certificate basics."""
         if user_input is not None:
-            domain = str(user_input[CONF_DOMAIN]).strip().lower()
-            try:
-                await _async_validate_user_input(self.hass, user_input)
-            except AliyunDnsError as err:
-                _LOGGER.error("校验阿里云凭据失败：%s", err)
-                errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("校验阿里云凭据时出现异常")
-                errors["base"] = "cannot_connect"
-            else:
-                await self.async_set_unique_id(domain)
-                self._abort_if_unique_id_configured()
-                user_input[CONF_DOMAIN] = domain
-                return self.async_create_entry(title=domain, data=user_input)
+            self._pending = {
+                CONF_PROVIDER: str(user_input[CONF_PROVIDER]),
+                CONF_DOMAIN: str(user_input[CONF_DOMAIN]).strip().lower(),
+                CONF_CERT_DIR: str(user_input.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR),
+                CONF_STAGING: bool(user_input.get(CONF_STAGING, False)),
+            }
+            return await self.async_step_credentials()
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_PROVIDER, default=PROVIDER_ALIYUN
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(value=key, label=label)
+                                for key, label in PROVIDER_CLASSES.items()
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
                     vol.Required(CONF_DOMAIN): str,
-                    vol.Required(CONF_EMAIL): str,
-                    vol.Required(CONF_ACCESS_KEY_ID): str,
-                    vol.Required(CONF_ACCESS_KEY_SECRET): str,
                     vol.Optional(CONF_CERT_DIR, default=DEFAULT_CERT_DIR): str,
                     vol.Optional(CONF_STAGING, default=False): bool,
                 }
             ),
-            errors=errors,
             description_placeholders={
                 "production": ACME_DIRECTORY_PRODUCTION,
                 "staging": ACME_DIRECTORY_STAGING,
             },
         )
 
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask only for the fields the chosen provider needs."""
+        pending: dict[str, Any] | None = getattr(self, "_pending", None)
+        if not pending:
+            return await self.async_step_user()
+
+        provider = str(pending[CONF_PROVIDER])
+        domain = str(pending[CONF_DOMAIN])
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            data = {**pending, **user_input}
+            try:
+                await _async_validate(self.hass, provider, data, domain)
+            except DnsProviderError as err:
+                _LOGGER.error("校验 %s 凭据失败：%s", provider, err)
+                errors["base"] = "invalid_auth"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("校验 %s 凭据时出现异常", provider)
+                errors["base"] = "cannot_connect"
+            else:
+                await self.async_set_unique_id(domain)
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=domain, data=data)
+
+        schema: dict[Any, Any] = {
+            vol.Required(field): str for field in CREDENTIAL_FIELDS[provider]
+        }
+        return self.async_show_form(
+            step_id="credentials",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+            description_placeholders={"provider": PROVIDER_CLASSES[provider]},
+        )
+
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Return the options flow."""
-        return AcmeCertOptionsFlow()
+        return HaSslOptionsFlow()
 
 
-class AcmeCertOptionsFlow(OptionsFlow):
+class HaSslOptionsFlow(OptionsFlow):
     """Tune renewal behaviour."""
 
     async def async_step_init(
