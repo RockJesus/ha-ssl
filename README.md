@@ -19,14 +19,14 @@
 - 自动续期：默认证书剩余 ≤30 天时自动重签，可配置
 - 续期成功后可自动重启 HA 以加载新证书（HA 只在启动时读取证书）
 - 实体：证书到期时间、剩余天数、证书异常（problem）、立即签发按钮、自动续期开关
-- 服务：`acme_cert.renew`（手动签发）、`acme_cert.configure_https`（写入 `configuration.yaml` 并重启，自动备份）
+- 服务：`ha_ssl.renew`（手动签发）、`ha_ssl.configure_https`（写入 `configuration.yaml` 并重启，自动备份）
 - 支持 Let's Encrypt 测试环境（staging），便于先验证流程
 
 ## 安装
 
 HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https://github.com/RockJesus/ha-ssl`（类别选 Integration）→ 安装 → 重启 HA。
 
-或手动放到 `config/custom_components/acme_cert/` 后重启。
+或手动放到 `config/custom_components/ha_ssl/` 后重启。
 
 ## 配置
 
@@ -55,7 +55,7 @@ http:
 方式 B（用服务自动写入并重启）：
 
 ```yaml
-service: acme_cert.configure_https
+service: ha_ssl.configure_https
 data:
   restart: true
 ```
@@ -76,7 +76,8 @@ data:
 
 ## 版本
 
-- v1.0.2：仓库与项目整体更名为 ha-ssl（domain 仍为 `acme_cert`，实体不变）
+- v1.0.3：集成代码目录与 domain 一并改为 `ha_ssl`（`custom_components/ha_ssl`），服务名变为 `ha_ssl.renew` / `ha_ssl.configure_https`，账户密钥目录改为 `/config/ha_ssl`
+- v1.0.2：仓库与项目整体更名为 ha-ssl
 - v1.0.1：集成显示名改为 HA SSL（domain 仍为 `acme_cert`，实体不变）
 - v1.0.0：首个版本，支持阿里云 dns-01 签发、自动续期、到期实体与 HTTPS 配置服务。
 

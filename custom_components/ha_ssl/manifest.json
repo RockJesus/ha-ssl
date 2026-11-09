@@ -1,5 +1,5 @@
 {
-  "domain": "acme_cert",
+  "domain": "ha_ssl",
   "name": "HA SSL",
   "codeowners": [
     "@RockJesus"
@@ -10,5 +10,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/RockJesus/ha-ssl/issues",
   "requirements": [],
-  "version": "1.0.2"
+  "version": "1.0.3"
 }

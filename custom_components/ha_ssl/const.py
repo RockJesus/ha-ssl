@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-DOMAIN = "acme_cert"
-MANUFACTURER = "ACME"
+DOMAIN = "ha_ssl"
+MANUFACTURER = "HA SSL"
 
 # 配置项
 CONF_DOMAIN = "domain"
@@ -30,14 +30,14 @@ DEFAULT_UPDATE_INTERVAL = timedelta(hours=6)
 
 CERT_FILE_NAME = "fullchain.pem"
 KEY_FILE_NAME = "privkey.pem"
-ACCOUNT_KEY_DIR = "/config/acme_cert"
+ACCOUNT_KEY_DIR = "/config/ha_ssl"
 ACCOUNT_KEY_FILE = "account_key.pem"
 STATE_FILE = "state.json"
 
 # ACME
 ACME_DIRECTORY_PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 ACME_DIRECTORY_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
-ACME_USER_AGENT = "home-assistant-acme-cert"
+ACME_USER_AGENT = "home-assistant-ha-ssl"
 
 # 阿里云 DNS
 ALIYUN_DNS_ENDPOINT = "https://dns.aliyuncs.com/"
