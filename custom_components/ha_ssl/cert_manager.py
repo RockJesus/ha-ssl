@@ -193,6 +193,10 @@ class CertManager:
             except (AcmeError, DnsProviderError) as err:
                 self.last_error = str(err)
                 raise CertIssueError(str(err)) from err
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.exception("初始化 ACME 或定位域名失败")
+                self.last_error = f"{type(err).__name__}: {err}"
+                raise CertIssueError(self.last_error) from err
 
             rr = "_acme-challenge"
             if relative:
@@ -227,8 +231,10 @@ class CertManager:
                 aiohttp.ClientError,
                 asyncio.TimeoutError,
             ) as err:
-                self.last_error = str(err)
-                raise CertIssueError(str(err)) from err
+                _LOGGER.exception("签发请求失败")
+                message = f"{type(err).__name__}: {err}" if str(err) else type(err).__name__
+                self.last_error = message
+                raise CertIssueError(message) from err
             finally:
                 await cleanup_txt()
 
