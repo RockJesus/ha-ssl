@@ -134,10 +134,29 @@ class AcmeClient:
 
     async def _async_load_directory(self) -> None:
         timeout = aiohttp.ClientTimeout(total=30)
-        async with self._session.get(self._directory_url, timeout=timeout) as resp:
-            if resp.status != 200:
-                raise AcmeError(f"获取 ACME 目录失败：HTTP {resp.status}")
-            self._directory = await resp.json(content_type=None)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with self._session.get(
+                    self._directory_url, timeout=timeout
+                ) as resp:
+                    if resp.status != 200:
+                        raise AcmeError(f"获取 ACME 目录失败：HTTP {resp.status}")
+                    self._directory = await resp.json(content_type=None)
+                    return
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                last_error = err
+                _LOGGER.debug(
+                    "获取 ACME 目录失败（第 %s 次）：%s: %s",
+                    attempt + 1,
+                    type(err).__name__,
+                    err,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(3)
+        raise AcmeError(
+            f"获取 ACME 目录失败：{type(last_error).__name__}: {last_error}"
+        )
 
     async def _async_fetch_nonce(self) -> str:
         timeout = aiohttp.ClientTimeout(total=30)

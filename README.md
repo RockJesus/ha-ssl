@@ -119,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.12：ACME 流量改用自建 DoH 解析（只取 A 记录、只用 IPv4），不再依赖宿主机 DNS；目录请求失败自动重试 3 次。宿主机 DNS 被劫持或 IPv6 记录不可达时，原逻辑会在「获取 ACME 目录」一步直接超时（`TimeoutError`，消息为空）
 - v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）
 - v1.0.10：修复 finalize 之后轮询订单状态时的返回值解包错误（`_async_poll` 早已只返回响应体，调用处仍按两元组解包，导致每次签发到最后一步抛 `ValueError: too many values to unpack`）；新增 `scripts/selftest_acme.py` 与 `ACME Self Test` 工作流，用本地假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 轮询 → 下载证书」全链路，防止同类问题复发
 - v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）

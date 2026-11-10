@@ -22,6 +22,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .acme_client import AcmeClient, AcmeError, load_or_create_account_key
+from .doh import DohResolver
 from .const import (
     ACCOUNT_KEY_DIR,
     ACCOUNT_KEY_FILE,
@@ -89,8 +90,30 @@ class CertManager:
         self.hass = hass
         self.entry = entry
         self._lock = asyncio.Lock()
+        self._acme_session: aiohttp.ClientSession | None = None
+        self._doh: DohResolver | None = None
         self.last_error: str | None = None
         self.last_issued_at: datetime | None = None
+
+    def _get_acme_session(self) -> aiohttp.ClientSession:
+        """Session for ACME traffic: resolve through DoH, IPv4 only."""
+        if self._acme_session is None or self._acme_session.closed:
+            self._doh = DohResolver()
+            self._acme_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    resolver=self._doh, ttl_dns_cache=600
+                )
+            )
+        return self._acme_session
+
+    async def async_close(self) -> None:
+        """Release the dedicated ACME session."""
+        if self._acme_session is not None and not self._acme_session.closed:
+            await self._acme_session.close()
+        if self._doh is not None:
+            await self._doh.close()
+        self._acme_session = None
+        self._doh = None
 
     @property
     def domain(self) -> str:
@@ -184,7 +207,7 @@ class CertManager:
                 load_or_create_account_key, account_key_path
             )
 
-            client = AcmeClient(session, directory, account_key)
+            client = AcmeClient(self._get_acme_session(), directory, account_key)
             provider = async_create_provider(session, provider_key, dict(self.entry.data))
 
             try:
