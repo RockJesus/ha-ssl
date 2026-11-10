@@ -316,7 +316,7 @@ class AcmeClient:
                     continue
                 raise
 
-        order, _ = await self._async_poll(
+        order = await self._async_poll(
             order_url, ("valid",), ("invalid",), wait_timeout
         )
         if order.get("status") != "valid":
