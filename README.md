@@ -119,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.20：HA 2026.8 起 HTTP 服务器设置已迁到 UI（设置 → 系统 → 网络），`configuration.yaml` 的 `http:` 段在迁移后被忽略；`ha_ssl.probe` 增加 http_storage，直接读取 `.storage` 里的 HTTP 设置，确认证书路径是否真的落库
 - v1.0.19：修正 self_probe 对 http 请求误传 `ssl=None` 导致 500
 - v1.0.18：`ha_ssl.probe` 增加 self_probe：从 HA 内部直连 127.0.0.1:8123 的 http 与 https，判断实例当前到底在提供哪种协议
 - v1.0.17：`ha_ssl.probe` 进一步输出全部 `http:` 块、块数量与证书记录文件的存在性/大小，用来诊断「配置写了但 HTTPS 没生效」

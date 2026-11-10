@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import json
 import pathlib
 
 import aiohttp
@@ -120,4 +121,25 @@ def read_http_section() -> dict[str, object]:
             _stat("/config/ssl/privkey.pem"),
             _stat("/ssl/fullchain.pem"),
         ],
+    }
+
+
+def read_http_storage() -> dict[str, object]:
+    """Look for the HTTP server settings Home Assistant keeps in .storage."""
+    base = pathlib.Path("/config/.storage")
+    candidates = ["http", "core.http", "http_server", "network"]
+    found: dict[str, object] = {}
+    if not base.is_dir():
+        return {"storage_dir": False}
+    for name in candidates:
+        path = base / name
+        if path.is_file():
+            try:
+                found[name] = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except json.JSONDecodeError as err:
+                found[name] = {"_parse_error": str(err)}
+    return {
+        "storage_dir": True,
+        "files": sorted(item.name for item in base.iterdir() if item.is_file()),
+        "matched": found,
     }
