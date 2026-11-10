@@ -417,6 +417,124 @@ def _strip_yaml_ssl(fullchain: str, key: str, config_file: str = CONFIG_FILE) ->
     return f"已清理 configuration.yaml 里已失效的 ssl 两行（备份 {backup.name}）"
 
 
+HTTPS_BOOTSTRAP_FILE = "https_bootstrap.json"
+
+
+def _cert_fingerprint(fullchain: str) -> str:
+    """Return a stable fingerprint of the certificate file."""
+    import hashlib
+
+    data = pathlib.Path(fullchain).read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+async def _async_local_tls_ready(hass: HomeAssistant) -> bool:
+    """Return True when 127.0.0.1:8123 answers over TLS."""
+    session = async_get_clientsession(hass)
+    try:
+        async with session.get(
+            "https://127.0.0.1:8123/api/",
+            ssl=False,
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            await resp.read()
+            return resp.status in (200, 401)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return False
+
+
+async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
+    """Return True when the pending HTTP config points at our certificate."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return False
+    store = await async_get_and_load_store(hass)
+    pending = store.pending
+    return bool(pending and pending.get("ssl_certificate") == fullchain)
+
+
+async def async_maybe_promote_https(hass: HomeAssistant, fullchain: str) -> str | None:
+    """Promote our pending HTTP config once TLS is verified locally."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return None
+
+    store = await async_get_and_load_store(hass)
+    pending = store.pending
+    if not pending or pending.get("ssl_certificate") != fullchain:
+        return None
+    if not await _async_local_tls_ready(hass):
+        return None
+    await store.async_promote_pending()
+    return "本机 TLS 已确认可用，已自动固化为正式 HTTP 配置"
+
+
+async def async_maybe_enable_https(
+    hass: HomeAssistant, fullchain: str, key: str
+) -> str | None:
+    """First-run bootstrap: point HA's HTTP config at our certificate."""
+    if not pathlib.Path(fullchain).exists() or not pathlib.Path(key).exists():
+        return None
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return None
+
+    store = await async_get_and_load_store(hass)
+    current = store.pending or store.stable
+    if current.get("ssl_certificate") == fullchain and current.get("ssl_key") == key:
+        return None
+    if current.get("ssl_certificate"):
+        _LOGGER.info(
+            "HTTP 配置里已有其他证书（%s），不自动覆盖", current.get("ssl_certificate")
+        )
+        return None
+
+    fingerprint = await hass.async_add_executor_job(_cert_fingerprint, fullchain)
+    marker = pathlib.Path(ACCOUNT_KEY_DIR) / HTTPS_BOOTSTRAP_FILE
+    if marker.exists():
+        try:
+            previous = json.loads(marker.read_text(encoding="utf-8"))
+        except ValueError:
+            previous = {}
+        if previous.get("fingerprint") == fingerprint:
+            return None
+
+    await hass.async_add_executor_job(_validate_cert_pair, fullchain, key)
+
+    config = dict(store.stable)
+    config["ssl_certificate"] = fullchain
+    config["ssl_key"] = key
+    await store.async_set_pending(config)
+
+    def _mark() -> None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps(
+                {
+                    "fingerprint": fingerprint,
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
+                    "fullchain": fullchain,
+                    "key": key,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    await hass.async_add_executor_job(_mark)
+    return "已把证书写入 HTTP 配置（待重启生效），重启后会自动确认"
+
+
 async def async_apply_https_config(
     hass: HomeAssistant, fullchain: str, key: str
 ) -> dict[str, Any]:

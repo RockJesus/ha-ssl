@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import voluptuous as vol
@@ -19,6 +20,9 @@ from homeassistant.helpers.event import async_call_later
 from .cert_manager import (
     CertManager,
     async_apply_https_config,
+    async_maybe_enable_https,
+    async_maybe_promote_https,
+    async_pending_uses_cert,
     async_promote_https,
 )
 from .const import (
@@ -62,6 +66,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     _async_register_services(hass)
+
+    manager = coordinator.manager
+
+    async def _async_promote_when_listening() -> None:
+        """HA 的 HTTP 服务起得比集成晚，等本机 TLS 真能应答再固化。"""
+        for _ in range(24):
+            result = await async_maybe_promote_https(hass, manager.fullchain_path)
+            if result:
+                _LOGGER.info(result)
+                return
+            await asyncio.sleep(10)
+
+    promote_task: asyncio.Task | None = None
+    if await async_pending_uses_cert(hass, manager.fullchain_path):
+        promote_task = hass.async_create_task(_async_promote_when_listening())
+        entry.async_on_unload(promote_task.cancel)
+
+    enabled = await async_maybe_enable_https(
+        hass, manager.fullchain_path, manager.key_path
+    )
+    if enabled:
+        _LOGGER.info(enabled)
+        hass.async_create_task(
+            hass.services.async_call(
+                "homeassistant", "restart", {}, blocking=False
+            )
+        )
     return True
 
 
