@@ -51,37 +51,48 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
         """Read the certificate and renew it when it is close to expiry."""
         info = await self.hass.async_add_executor_job(self.manager.read_cert)
 
+        options = self.entry.options
+        auto_renew = bool(options.get(CONF_AUTO_RENEW, DEFAULT_AUTO_RENEW))
+        renew_days = int(options.get(CONF_RENEW_DAYS, DEFAULT_RENEW_DAYS))
+
         if self._first_run:
             # Never block startup with a full issuance; the delayed refresh
-            # scheduled during setup will handle an overdue renewal.
+            # scheduled during setup will handle the first issuance.
             self._first_run = False
             return info
 
         if not info.exists or info.valid_to is None:
-            return info
+            if not auto_renew:
+                return info
+            _LOGGER.info("还没有证书，开始首次签发：%s", self.manager.domain)
+            # 首次签发时 ssl_certificate 还没写进 configuration.yaml，
+            # 重启也不会让 HTTPS 生效，反而会打断用户，所以这里不重启。
+            return await self._async_issue_once(restart_after=False)
 
-        options = self.entry.options
-        auto_renew = bool(options.get(CONF_AUTO_RENEW, DEFAULT_AUTO_RENEW))
-        renew_days = int(options.get(CONF_RENEW_DAYS, DEFAULT_RENEW_DAYS))
         days_left = info.days_left
-
         if auto_renew and days_left is not None and days_left <= renew_days:
             _LOGGER.info(
                 "证书剩余 %s 天，开始自动续期（阈值 %s 天）", days_left, renew_days
             )
-            try:
-                info = await self.manager.async_issue()
-            except CertIssueError as err:
-                _LOGGER.error("自动续期失败：%s", err)
-                info = await self.hass.async_add_executor_job(self.manager.read_cert)
-                info.last_error = str(err)
-                return info
+            should_restart = bool(
+                options.get(CONF_RESTART_AFTER_RENEW, DEFAULT_RESTART_AFTER_RENEW)
+            )
+            return await self._async_issue_once(restart_after=should_restart)
 
-            if options.get(
-                CONF_RESTART_AFTER_RENEW, DEFAULT_RESTART_AFTER_RENEW
-            ):
-                await self._async_restart_ha()
+        return info
 
+    async def _async_issue_once(self, *, restart_after: bool) -> CertInfo:
+        """Run one issuance and keep the last error visible on failure."""
+        try:
+            info = await self.manager.async_issue()
+        except CertIssueError as err:
+            _LOGGER.error("签发失败：%s", err)
+            info = await self.hass.async_add_executor_job(self.manager.read_cert)
+            info.last_error = str(err)
+            return info
+
+        if restart_after:
+            await self._async_restart_ha()
         return info
 
     async def async_force_issue(self) -> CertInfo:

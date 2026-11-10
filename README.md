@@ -119,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）
 - v1.0.8：按各家 SDK 规范校正三处实现——DNSPod 的「空结果」「记录已存在」不再当成错误，列表按 name/type 过滤并分页；Cloudflare 的 `/zones` 改为 `per_page=5`（规范下限），记录列表改为按类型分页 + 本地精确比对，删除 81044 幂等；阿里云只在明确的「域名不存在」错误码时继续向上找 zone，凭据/签名/权限错误直接暴露
 - v1.0.7：支持多 DNS 服务商（阿里云云解析 / 腾讯云 DNSPod / Cloudflare），配置改为「先选服务商、再填凭据」两段式；去掉邮箱字段（ACME 账号不要求联系人）
 - v1.0.6：补 manifest `categories`（`computers_network`）、iot_class 修正为 `cloud_polling`、品牌图补齐深色主题（icon/logo 各 2 种主题共 8 个文件）
