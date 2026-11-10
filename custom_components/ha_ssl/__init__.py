@@ -22,9 +22,11 @@ from .const import (
     DOMAIN,
     PLATFORMS,
     SERVICE_CONFIGURE_HTTPS,
+    SERVICE_PROBE,
     SERVICE_RENEW,
 )
 from .coordinator import AcmeCertCoordinator
+from .probe import async_probe_cas
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +99,25 @@ def _async_register_services(hass: HomeAssistant) -> None:
             "days_left": info.days_left,
         }
 
+    async def _async_handle_probe(call: ServiceCall) -> ServiceResponse:
+        """Probe candidate ACME endpoints from this host (DoH + IPv4)."""
+        import aiohttp
+
+        from .doh import DohResolver
+
+        resolver = DohResolver()
+        session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(resolver=resolver, ttl_dns_cache=600)
+        )
+        try:
+            results = await async_probe_cas(session)
+        finally:
+            await session.close()
+            await resolver.close()
+        for item in results:
+            _LOGGER.info("CA 探测：%s", item)
+        return {"results": list(results)}
+
     async def _async_handle_configure_https(call: ServiceCall) -> ServiceResponse:
         coordinator = _first_coordinator()
         if coordinator is None:
@@ -127,6 +148,13 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _async_handle_renew,
         schema=vol.Schema({}),
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROBE,
+        _async_handle_probe,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,

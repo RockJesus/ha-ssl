@@ -13,3 +13,7 @@ configure_https:
       example: true
       selector:
         boolean:
+
+probe:
+  name: 测试 CA 连通性
+  description: 从当前 Home Assistant 主机逐个探测候选 ACME 目录的可达性，返回耗时与错误。

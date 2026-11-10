@@ -70,6 +70,7 @@ DOH_RESOLVERS = (
 # 服务
 SERVICE_RENEW = "renew"
 SERVICE_CONFIGURE_HTTPS = "configure_https"
+SERVICE_PROBE = "probe"
 ATTR_RESTART = "restart"
 
 # 平台
