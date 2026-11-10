@@ -53,12 +53,11 @@ async def async_probe_self(session: aiohttp.ClientSession) -> list[dict[str, obj
     for scheme, ssl_flag in (("http", False), ("https", False)):
         started = time.monotonic()
         url = f"{scheme}://127.0.0.1:8123/api/"
+        kwargs: dict[str, object] = {"timeout": aiohttp.ClientTimeout(total=10)}
+        if scheme == "https":
+            kwargs["ssl"] = ssl_flag
         try:
-            async with session.get(
-                url,
-                timeout=aiohttp.ClientTimeout(total=10),
-                ssl=ssl_flag if scheme == "https" else None,
-            ) as resp:
+            async with session.get(url, **kwargs) as resp:
                 await resp.read()
                 results.append(
                     {
