@@ -41,6 +41,27 @@ from .providers import PROVIDER_CLASSES, DnsProviderError, async_create_provider
 
 _LOGGER = logging.getLogger(__name__)
 
+PROVIDER_HELP: dict[str, str] = {
+    PROVIDER_ALIYUN: (
+        "**阿里云云解析**\n"
+        "1. 控制台右上角头像 → AccessKey 管理 → 创建 AccessKey（建议用 RAM 子账号）\n"
+        "2. 给该子账号授予 `AliyunDNSFullAccess`，或只给这个域名的解析读写权限\n"
+        "3. 确认域名已添加在「云解析 DNS」里"
+    ),
+    PROVIDER_DNSPOD: (
+        "**DNSPod / 腾讯云 DNSPod**\n"
+        "1. DNSPod 控制台 → 账号设置 → API 密钥 → 创建 Token\n"
+        "2. 记下 Token ID 与 Token（Token 只显示一次）\n"
+        "3. Token 需要具备该域名的解析读写权限"
+    ),
+    PROVIDER_CLOUDFLARE: (
+        "**Cloudflare**\n"
+        "1. 控制台 → My Profile → API Tokens → Create Token\n"
+        "2. 用 `Edit zone DNS` 模板，并把 Zone 限定到签发证书用的这一个域名\n"
+        "3. 复制 Token（只显示一次）"
+    ),
+}
+
 CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     PROVIDER_ALIYUN: (CONF_ALIYUN_ACCESS_KEY_ID, CONF_ALIYUN_ACCESS_KEY_SECRET),
     PROVIDER_DNSPOD: (CONF_DNSPOD_TOKEN_ID, CONF_DNSPOD_TOKEN),
@@ -177,7 +198,10 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="credentials",
             data_schema=vol.Schema(schema),
             errors=errors,
-            description_placeholders={"provider": PROVIDER_CLASSES[provider]},
+            description_placeholders={
+                "provider": PROVIDER_CLASSES[provider],
+                "provider_help": PROVIDER_HELP.get(provider, ""),
+            },
         )
 
     @staticmethod

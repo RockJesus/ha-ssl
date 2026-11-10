@@ -3,43 +3,61 @@
     "step": {
       "user": {
         "title": "配置 HA SSL",
-        "description": "选择 DNS 服务商并填写要签发证书的域名。凭据只保存在本地配置中，建议使用仅有 DNS 解析权限的子账号或最小权限 API 令牌。\n生产环境: {production}\n测试环境: {staging}",
+        "description": "选一个 DNS 服务商、确认域名即可，剩下的全自动：签发证书 → 写入 Home Assistant 的 HTTPS 配置 → 自动重启生效 → 到期前自动续签。\n\n**域名**：默认取 Home Assistant 自己的地址，一般不用改；无法自动识别时才需要填写。\n**凭据**：只保存在本地配置里，下一步再填。建议用只有 DNS 解析权限的子账号或最小权限令牌。\n\n当前签发环境：{production}（测试环境：{staging}）",
         "data": {
           "provider": "DNS 服务商",
-          "domain": "域名（默认取自 HA 当前地址，一般无需修改）",
+          "domain": "证书域名",
           "cert_dir": "证书输出目录",
           "staging": "使用 Let's Encrypt 测试环境"
+        },
+        "data_description": {
+          "domain": "留空则自动使用 Home Assistant 当前地址里的主机名",
+          "cert_dir": "默认 /config/ssl，一般不用改。注意不是 /ssl——那是加载项的挂载路径",
+          "staging": "仅调试用：测试环境签出的证书不被浏览器和 App 信任"
         }
       },
       "credentials": {
-        "title": "填写凭据（{provider}）",
-        "description": "保存时会调用 {provider} 接口校验凭据，并确认该域名归属。",
+        "title": "填写 {provider} 凭据",
+        "description": "{provider_help}\n\n保存时会先用这组凭据调用 {provider} 接口，确认域名归属，再开始签发。",
         "data": {
           "aliyun_access_key_id": "阿里云 AccessKey ID",
           "aliyun_access_key_secret": "阿里云 AccessKey Secret",
           "dnspod_token_id": "DNSPod Token ID",
           "dnspod_token": "DNSPod Token",
-          "cloudflare_api_token": "Cloudflare API Token（需 Zone.DNS 编辑权限）"
+          "cloudflare_api_token": "Cloudflare API Token"
+        },
+        "data_description": {
+          "aliyun_access_key_id": "形如 LTAI 开头的 24 位 ID",
+          "aliyun_access_key_secret": "AccessKey 创建时只显示一次，请当场复制",
+          "dnspod_token_id": "纯数字的 Token ID",
+          "dnspod_token": "创建 Token 时显示的密钥串",
+          "cloudflare_api_token": "需要 Zone.DNS 的编辑权限"
         }
       }
     },
     "error": {
-      "invalid_auth": "服务商凭据无效，或该账号下没有这个域名",
-      "cannot_connect": "无法连接服务商接口，请检查网络",
-      "domain_required": "无法自动识别域名，请填写要签发证书的域名"
+      "invalid_auth": "凭据无效，或该账号下没有这个域名。常见原因：AccessKey 已停用、子账号没有 DNS 解析权限、域名不在这个账号下",
+      "cannot_connect": "连不上服务商接口。检查 HA 主机能否访问外网，或稍后重试",
+      "domain_required": "无法从 Home Assistant 地址自动识别域名，请手动填写证书要绑定的域名"
     },
     "abort": {
-      "already_configured": "该域名已经配置过了"
+      "already_configured": "这个域名已经配置过了，直接用它现有的证书即可"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "续期设置",
+        "description": "默认提前 30 天自动续签；续签成功后重启一次以加载新证书。",
         "data": {
           "auto_renew": "自动续期",
           "renew_days": "提前多少天续期",
           "restart_after_renew": "续期成功后自动重启 Home Assistant"
+        },
+        "data_description": {
+          "auto_renew": "关闭后只有点「立即签发」按钮才会续期",
+          "renew_days": "剩余天数低于该值时开始续签，可选 7–89 天",
+          "restart_after_renew": "Home Assistant 只在启动时读取证书，不重启则新证书不生效；关闭后需你手动重启"
         }
       }
     }

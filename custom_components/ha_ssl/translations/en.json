@@ -3,43 +3,61 @@
     "step": {
       "user": {
         "title": "Set up HA SSL",
-        "description": "Pick the DNS provider and the domain to certify. Credentials are stored locally; use a sub-account or API token limited to DNS permissions.\nProduction: {production}\nStaging: {staging}",
+        "description": "Pick a DNS provider and confirm the domain — everything else is automatic: issue the certificate, write it into Home Assistant's HTTPS config, restart to activate, and renew before expiry.\n\n**Domain**: defaults to Home Assistant's own URL, usually no change needed.\n**Credentials**: stored locally only, asked in the next step. Prefer a sub-account or token with DNS-only permissions.\n\nACME directory: {production} (staging: {staging})",
         "data": {
           "provider": "DNS provider",
-          "domain": "Domain (defaults to the Home Assistant URL, usually no change needed)",
+          "domain": "Certificate domain",
           "cert_dir": "Certificate output directory",
           "staging": "Use the Let's Encrypt staging environment"
+        },
+        "data_description": {
+          "domain": "Leave empty to use the host name from Home Assistant's own URL",
+          "cert_dir": "Defaults to /config/ssl. Note it is not /ssl — that is the add-on mount path",
+          "staging": "Debugging only: staging certificates are not trusted by browsers or the app"
         }
       },
       "credentials": {
-        "title": "Credentials ({provider})",
-        "description": "Saving calls the {provider} API to verify the credentials and the domain ownership.",
+        "title": "Enter {provider} credentials",
+        "description": "{provider_help}\n\nOn save the credentials are used to query {provider} and verify the domain before issuing.",
         "data": {
           "aliyun_access_key_id": "Aliyun AccessKey ID",
           "aliyun_access_key_secret": "Aliyun AccessKey Secret",
           "dnspod_token_id": "DNSPod Token ID",
           "dnspod_token": "DNSPod Token",
-          "cloudflare_api_token": "Cloudflare API Token (needs Zone.DNS edit)"
+          "cloudflare_api_token": "Cloudflare API Token"
+        },
+        "data_description": {
+          "aliyun_access_key_id": "24-character ID starting with LTAI",
+          "aliyun_access_key_secret": "Shown only once at creation — copy it immediately",
+          "dnspod_token_id": "Numeric token ID",
+          "dnspod_token": "Secret string shown when the token is created",
+          "cloudflare_api_token": "Requires Zone.DNS edit permission"
         }
       }
     },
     "error": {
-      "invalid_auth": "The provider rejected the credentials, or the account does not own this domain",
-      "cannot_connect": "Cannot reach the provider API, check the network",
-      "domain_required": "Cannot derive a domain automatically, please fill in the domain"
+      "invalid_auth": "Invalid credentials, or this account does not own the domain. Common causes: disabled AccessKey, sub-account without DNS permissions, domain under another account",
+      "cannot_connect": "Cannot reach the provider API. Check that the Home Assistant host has outbound network access, or retry later",
+      "domain_required": "Could not derive a domain from the Home Assistant URL, please enter the domain to bind the certificate to"
     },
     "abort": {
-      "already_configured": "This domain is already configured"
+      "already_configured": "This domain is already configured — its existing certificate is reused"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Renewal settings",
+        "title": "Renewal",
+        "description": "Renews automatically 30 days before expiry, then restarts once so the new certificate is loaded.",
         "data": {
           "auto_renew": "Automatic renewal",
-          "renew_days": "Renew when fewer days remain",
-          "restart_after_renew": "Restart Home Assistant after renewal"
+          "renew_days": "Renew this many days before expiry",
+          "restart_after_renew": "Restart Home Assistant after a successful renewal"
+        },
+        "data_description": {
+          "auto_renew": "When off, renewal only happens via the Issue now button",
+          "renew_days": "Renew when the remaining days drop below this value (7-89)",
+          "restart_after_renew": "Home Assistant reads the certificate at startup; without a restart the new certificate is not served"
         }
       }
     }
@@ -71,22 +89,22 @@
   },
   "services": {
     "renew": {
-      "name": "Issue or renew now",
-      "description": "Run one ACME dns-01 issuance and write the certificate files."
+      "name": "Issue / renew now",
+      "description": "Run one ACME dns-01 issuance immediately and write the certificate to the configured directory."
     },
     "configure_https": {
-      "name": "Configure HTTPS and restart",
-      "description": "Write ssl_certificate / ssl_key into the HTTP config used by this HA version (the pending .storage/http config on 2026.11+, or configuration.yaml with a backup on older versions) and restart to apply.",
+      "name": "Write HTTPS config and restart",
+      "description": "Write ssl_certificate / ssl_key into the HTTP config used by the running Home Assistant version (a pending store entry on 2026.11+, configuration.yaml with a backup on older versions), then restart so HTTPS takes effect.",
       "fields": {
         "restart": {
           "name": "Restart automatically",
-          "description": "Restart Home Assistant right after writing the config."
+          "description": "Restart Home Assistant right after the config is written."
         }
       }
     },
     "promote_https": {
-      "name": "Promote HTTPS config",
-      "description": "Confirm the pending HTTPS config so it is not auto-reverted (HA 2026.11+ keeps HTTP config in .storage/http and new configs start as a pending trial)."
+      "name": "Confirm HTTPS config",
+      "description": "Promote the pending HTTPS config to the stable one and cancel the 5-minute auto-revert."
     }
   }
 }

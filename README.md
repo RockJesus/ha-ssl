@@ -41,9 +41,9 @@ HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https:
 | 字段 | 说明 |
 |---|---|
 | DNS 服务商 | 阿里云云解析 / 腾讯云 DNSPod / Cloudflare |
-| 域名 | 需要签发证书的完整域名，如 `home.example.com` |
-| 证书输出目录 | 默认 `/ssl`，也可是 `/config/ssl` |
-| 测试环境 | 先用 staging 验证，确认无误后删除重建走生产 |
+| 域名 | 留空即自动取 Home Assistant 当前地址的主机名；也可直接填 `home.example.com` |
+| 证书输出目录 | 默认 `/config/ssl`（**不是** `/ssl`——那是加载项的挂载路径） |
+| 测试环境 | 仅调试用，staging 证书不被浏览器和 App 信任 |
 
 **第 2 步：该服务商的凭据**
 
@@ -57,7 +57,16 @@ HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https:
 
 不需要填邮箱：ACME 账号本身不要求联系人，Let's Encrypt 的到期通知在证书自动续期的前提下也用不上。
 
-保存时会调用对应服务商 API 校验凭据并确认域名归属，失败提示 `invalid_auth`（凭据无效或账号里没有该域名）、`cannot_connect`（网络不通）。
+保存时会调用对应服务商 API 校验凭据并确认域名归属，失败提示 `invalid_auth`（凭据无效、子账号没 DNS 权限、域名不在该账号下）、`cannot_connect`（网络不通）。
+
+保存成功后不需要再做任何事，集成会自己往下走：
+
+1. 签发证书（DNS-01，自动写/删 TXT 记录）→ 弹出「HA SSL 正在申请证书」通知
+2. 把证书写进 HA 的 HTTPS 配置 → 弹出「HA SSL 正在启用 HTTPS」通知，并自动重启一次
+3. 重启后自动探测本机 TLS 并确认配置（不会 5 分钟回退），`external_url` 同步切成 `https://`
+4. 之后每 6 小时检查一次，剩余 30 天时自动续签
+
+此时改用 `https://<域名>:8123` 访问；手机上的 Home Assistant App 也要把服务器地址改成 https。
 
 ## 启用 HTTPS
 
@@ -131,6 +140,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 - v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）
 - v1.0.10：修复 finalize 之后轮询订单状态时的返回值解包错误（`_async_poll` 早已只返回响应体，调用处仍按两元组解包，导致每次签发到最后一步抛 `ValueError: too many values to unpack`）；新增 `scripts/selftest_acme.py` 与 `ACME Self Test` 工作流，用本地假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 轮询 → 下载证书」全链路，防止同类问题复发
 - v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）
+- v1.1.7：优化用户引导——配置向导逐步骤说明（域名自动识别、`/config/ssl` 与 `/ssl` 的区别、测试环境证书不被信任、各家服务商取凭据的路径与最小权限），字段级说明、错误提示给出常见原因；首次签发与自动启用 HTTPS 各发一条持久通知告知进度与重启后的访问地址
 - v1.1.6：进一步免配置——域名默认从 HA 自己的 `external_url`/`internal_url` 自动带出（只需选服务商、填凭据，域名可留空）；HTTPS 确认可用后自动把 `external_url` 的 scheme 从 http 改成 https，手机 App 和跳转链接不会再指回明文
 - v1.1.5：自动重启改到 `EVENT_HOMEASSISTANT_STARTED`——setup 阶段 HA 还没进入 running，直接调 `homeassistant.restart` 会被拒（`Error executing service`），导致首次自动启用 HTTPS 只写了配置却没重启
 - v1.1.4：修复 v1.1.1~v1.1.3 的服务注册错误——`async_register` 里多传了一个位置参数（`SERVICE_PROMOTE_HTTPS` 落在 schema 位置），导致整个集成在 setup 阶段抛 `TypeError: got multiple values for argument 'schema'` 而无法加载，自动启用 HTTPS 的逻辑因此从没跑起来

@@ -96,6 +96,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     if enabled:
         _LOGGER.info(enabled)
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL 正在启用 HTTPS",
+                    "notification_id": "ha_ssl_enabling_https",
+                    "message": (
+                        "证书已写入 Home Assistant 的 HTTPS 配置，"
+                        "Home Assistant 将自动重启一次。\n\n"
+                        f"重启后请改用 `https://{manager.domain}:8123` 访问，"
+                        "iOS App 里的服务器地址也要同步改成 https。\n\n"
+                        "集成会在重启后自动确认配置（无需手动操作）；"
+                        "若 5 分钟内 HTTPS 仍不可用，会自动回退到原来的明文配置。"
+                    ),
+                },
+                blocking=False,
+            )
+        )
 
         async def _async_restart(_event=None) -> None:
             """setup 阶段 HA 还没 running，restart 会被拒，等启动完成再调。"""

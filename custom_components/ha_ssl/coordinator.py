@@ -65,6 +65,22 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             if not auto_renew or self.manager.busy:
                 return info
             _LOGGER.info("还没有证书，开始首次签发：%s", self.manager.domain)
+            self.hass.async_create_task(
+                self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "title": "HA SSL 正在申请证书",
+                        "notification_id": "ha_ssl_issuing",
+                        "message": (
+                            f"正在为 `{self.manager.domain}` 申请证书（DNS-01 验证），"
+                            "通常 1–3 分钟完成，期间会自动写入 DNS 记录。"
+                            "成功后证书保存到 /config/ssl，并自动启用 HTTPS。"
+                        ),
+                    },
+                    blocking=False,
+                )
+            )
             # 首次签发时 ssl_certificate 还没写进 configuration.yaml，
             # 重启也不会让 HTTPS 生效，反而会打断用户，所以这里不重启。
             return await self._async_issue_once(restart_after=False)
