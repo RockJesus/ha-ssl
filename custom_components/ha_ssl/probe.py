@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pathlib
+
 import aiohttp
+
+CONFIG_FILE = "/config/configuration.yaml"
 
 ACME_CANDIDATES = {
     "letsencrypt": "https://acme-v02.api.letsencrypt.org/directory",
@@ -53,3 +57,23 @@ async def async_probe_cas(
             for name, url in ACME_CANDIDATES.items()
         )
     )
+
+
+def read_http_section() -> dict[str, object]:
+    """Return what the http: block of configuration.yaml currently looks like."""
+    path = pathlib.Path(CONFIG_FILE)
+    if not path.exists():
+        return {"exists": False}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    http_lines: list[str] = []
+    for index, line in enumerate(lines):
+        if line.strip() == "http:":
+            http_lines = lines[index : index + 6]
+            break
+    return {
+        "exists": True,
+        "has_ssl_certificate": "ssl_certificate" in text,
+        "http_block": http_lines,
+        "tail": lines[-6:],
+    }

@@ -130,7 +130,13 @@ class CertManager:
         """Directory holding the certificate files."""
         if self._writable_cert_dir is not None:
             return self._writable_cert_dir
-        return str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
+        configured = str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
+        if configured != FALLBACK_CERT_DIR:
+            configured_file = pathlib.Path(configured) / CERT_FILE_NAME
+            fallback_file = pathlib.Path(FALLBACK_CERT_DIR) / CERT_FILE_NAME
+            if not configured_file.exists() and fallback_file.exists():
+                return FALLBACK_CERT_DIR
+        return configured
 
     @property
     def fullchain_path(self) -> str:

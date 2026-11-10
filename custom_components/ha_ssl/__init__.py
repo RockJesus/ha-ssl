@@ -26,7 +26,7 @@ from .const import (
     SERVICE_RENEW,
 )
 from .coordinator import AcmeCertCoordinator
-from .probe import async_probe_cas
+from .probe import async_probe_cas, read_http_section
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,9 +114,10 @@ def _async_register_services(hass: HomeAssistant) -> None:
         finally:
             await session.close()
             await resolver.close()
+        config_info = await hass.async_add_executor_job(read_http_section)
         for item in results:
             _LOGGER.info("CA 探测：%s", item)
-        return {"results": list(results)}
+        return {"results": list(results), "http_config": config_info}
 
     async def _async_handle_configure_https(call: ServiceCall) -> ServiceResponse:
         coordinator = _first_coordinator()
