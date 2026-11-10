@@ -225,8 +225,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         SERVICE_CONFIGURE_HTTPS,
-    SERVICE_PROMOTE_HTTPS,
         _async_handle_configure_https,
         schema=vol.Schema({vol.Optional(CONF_RESTART, default=True): cv.boolean}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PROMOTE_HTTPS,
+        _async_handle_promote_https,
+        schema=vol.Schema({}),
         supports_response=SupportsResponse.OPTIONAL,
     )

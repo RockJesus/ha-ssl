@@ -131,6 +131,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 - v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）
 - v1.0.10：修复 finalize 之后轮询订单状态时的返回值解包错误（`_async_poll` 早已只返回响应体，调用处仍按两元组解包，导致每次签发到最后一步抛 `ValueError: too many values to unpack`）；新增 `scripts/selftest_acme.py` 与 `ACME Self Test` 工作流，用本地假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 轮询 → 下载证书」全链路，防止同类问题复发
 - v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）
+- v1.1.4：修复 v1.1.1~v1.1.3 的服务注册错误——`async_register` 里多传了一个位置参数（`SERVICE_PROMOTE_HTTPS` 落在 schema 位置），导致整个集成在 setup 阶段抛 `TypeError: got multiple values for argument 'schema'` 而无法加载，自动启用 HTTPS 的逻辑因此从没跑起来
 - v1.1.3：签发后自动启用 HTTPS——集成启动时若发现 HA 的 HTTP 配置还没指向本集成的证书，自动写入待生效配置并重启；重启后自动探测 `https://127.0.0.1:8123`，通了就自动固化（取消 5 分钟回退），全程无需手动填路径或调服务；同一份证书只尝试一次，避免重启循环
 - v1.1.2：manifest 补 `dependencies: ["http"]`（v1.1.1 直接 import `homeassistant.components.http.config`，hassfest 要求声明依赖），版本号不动功能
 - v1.1.1：适配 HA 2026.11 起的 HTTP 配置新存储（`.storage/http`，`configuration.yaml` 里的 `http:` 只在首次迁移时生效、之后被忽略）。`configure_https` 现在写入待确认的新配置并重启，同时清理 configuration.yaml 里已失效、会触发修复提示的 ssl 两行；新增 `promote_https` 服务用于固化配置、取消 5 分钟自动回退；写入前先校验证书与私钥能否加载
