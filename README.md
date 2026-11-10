@@ -1,163 +1,136 @@
-# HA SSL（Home Assistant 自定义集成）
+# HA SSL
 
 [![Hassfest](https://github.com/RockJesus/ha-ssl/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/hassfest.yml)
 [![HACS Action](https://github.com/RockJesus/ha-ssl/actions/workflows/hacs.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/hacs.yml)
+[![ACME Self Test](https://github.com/RockJesus/ha-ssl/actions/workflows/selftest.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/selftest.yml)
 [![Privacy Scan](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml)
 
-在 Home Assistant 内部完成 **Let's Encrypt 证书签发与自动续期**，用阿里云 DNS 做 dns-01 验证。
-不依赖 HA 官方 Let's Encrypt 加载项，也不依赖宿主机 DNS 解析器（DNS 记录通过阿里云 API 写入，生效检查走公共 DoH 解析器）。
+在 Home Assistant 内部完成 **Let's Encrypt 证书签发、HTTPS 自动启用与自动续期**。
+只要选一个 DNS 服务商、填它的凭据，其余全自动——不需要加载项，也不需要宿主机能解析 DNS。
 
-## 解决什么问题
+> 适合国内环境：官方 Let's Encrypt 加载项常因镜像拉不到而装不上，或卡在 `code=SERVFAIL`——
+> 那个加载项靠宿主机 DNS 查 `_acme-challenge.<域名>` 的 SOA 来定位 zone，DNS 被路由器或运营商劫持时查不到。
+> 本集成直接用服务商 API 定位 zone 并写 TXT 记录，全程绕开宿主机 DNS。
 
-官方 Let's Encrypt 加载项在国内常见两类失败：
+## 快速开始
 
-- 镜像来自 `ghcr.io`，加载项装不上；
-- 加载项内部用 lego，写 TXT 前要先查 `_acme-challenge.<域名>` 的 SOA 来定位 zone，宿主机 DNS 被路由器/运营商劫持时会返回 `SERVFAIL`，报
-  `could not find zone ... code=SERVFAIL`。
+1. **装集成**：HACS 添加自定义仓库 `https://github.com/RockJesus/ha-ssl`（类别选 Integration），或把 `custom_components/ha_ssl/` 放进 `config/`，然后重启。
+2. **添加集成**：设置 → 设备与服务 → 添加集成 → **HA SSL** → 选 DNS 服务商 → 填凭据。
+3. **等它做完**：签发证书 → 写入 HTTPS 配置 → 自动重启一次 → 之后每 6 小时巡检、到期前自动续签。
 
-本集成用阿里云 OpenAPI 直接定位主域名并写入 TXT（`DescribeDomainRecords` / `AddDomainRecord`），绕开上述两步；协议实现只用到 `aiohttp` 与 `cryptography`（HA 自带），无需额外安装依赖。
+完成后改用 `https://<域名>:8123` 访问，手机 App 里的服务器地址也要同步改成 https。
 
-## 功能
+## 只填服务商凭据
 
-- dns-01 签发，单域名证书；DNS 服务商可选 **阿里云云解析 / 腾讯云 DNSPod / Cloudflare**
-- 自动续期：默认证书剩余 ≤30 天时自动重签，可配置
-- 续期成功后可自动重启 HA 以加载新证书（HA 只在启动时读取证书）
-- 实体：证书到期时间、剩余天数、证书异常（problem）、立即签发按钮、自动续期开关
-- 服务：`ha_ssl.renew`（手动签发）、`ha_ssl.configure_https`（写入 `configuration.yaml` 并重启，自动备份）
-- 支持 Let's Encrypt 测试环境（staging），便于先验证流程
-
-## 安装
-
-HACS → 集成 → 右上角三个点 → 自定义存储库 → 添加 `https://github.com/RockJesus/ha-ssl`（类别选 Integration）→ 安装 → 重启 HA。
-
-或手动放到 `config/custom_components/ha_ssl/` 后重启。
-
-## 配置
-
-设置 → 设备与服务 → 添加集成 → **HA SSL**，分两步：
-
-**第 1 步：域名与服务商**
-
-| 字段 | 说明 |
-|---|---|
-| DNS 服务商 | 阿里云云解析 / 腾讯云 DNSPod / Cloudflare |
-| 域名 | 留空即自动取 Home Assistant 当前地址的主机名；也可直接填 `home.example.com` |
-| 证书输出目录 | 默认 `/config/ssl`（**不是** `/ssl`——那是加载项的挂载路径） |
-| 测试环境 | 仅调试用，staging 证书不被浏览器和 App 信任 |
-
-**第 2 步：该服务商的凭据**
-
-| 服务商 | 需要的字段 | 权限要求 |
+| 服务商 | 需要填 | 最小权限 |
 |---|---|---|
-| 阿里云云解析 | AccessKey ID + Secret | 子账号至少 `AliyunDNSFullAccess`，或该域名的解析读写 |
-| 腾讯云 DNSPod | Token ID + Token | 控制台「密钥管理」生成的 API Token，需能管理该域名；传统 API 只支持**主账号** Token |
-| Cloudflare | API Token | 模板 Edit zone DNS（Zone.DNS 编辑权限），只勾该域名的 zone 即可 |
+| 阿里云云解析 | AccessKey ID + Secret | RAM 子账号授予 `AliyunDNSFullAccess`，或只给该域名的解析读写 |
+| 腾讯云 DNSPod | Token ID + Token | 账号设置 → API 密钥创建，需能管理该域名 |
+| Cloudflare | API Token | `Edit zone DNS` 模板，Zone 限定到该域名 |
 
-三家在实现上都遵守各自 SDK 的硬约束：阿里云走 RPC HMAC-SHA1 签名，TXT TTL 不低于 600 秒；DNSPod 用 `login_token=ID,Token` 表单提交，`record_line` 固定走默认线路，TTL 不低于 600 秒，并把「空结果」和「记录已存在」当作正常状态处理；Cloudflare 用 Bearer Token，`/zones` 的 `per_page` 按规范取 5，TXT 记录按类型分页拉取后本地精确比对名称（`name` 参数已是对象过滤器），删除返回 81044 视为已不存在。
+域名默认取 HA 自己的 `external_url`/`internal_url`，留空即可；没有邮箱字段（ACME 账号本来就不要求联系人）。
+凭据只用于调用服务商接口，保存在 HA 本地配置（`.storage`），建议用最小权限子账号并定期轮换。
 
-不需要填邮箱：ACME 账号本身不要求联系人，Let's Encrypt 的到期通知在证书自动续期的前提下也用不上。
+## 自动完成的事
 
-保存时会调用对应服务商 API 校验凭据并确认域名归属，失败提示 `invalid_auth`（凭据无效、子账号没 DNS 权限、域名不在该账号下）、`cannot_connect`（网络不通）。
+| 阶段 | 行为 |
+|---|---|
+| 签发 | dns-01 验证，自动写入再删除 `_acme-challenge` TXT 记录 |
+| 启用 HTTPS | 写进当前 HA 版本真正读取的 HTTP 配置（2026.11+ 是 `.storage/http`，旧版是 `configuration.yaml`），并自动重启一次 |
+| 确认 | 重启后探测本机 TLS，通了就固化配置（避免 5 分钟自动回退），并把 `external_url` 切成 `https://` |
+| 续期 | 每 6 小时检查一次，剩余 ≤30 天自动重签；成功后按选项重启加载新证书 |
 
-保存成功后不需要再做任何事，集成会自己往下走：
+签发与启用各发一条持久通知，说明正在做什么、重启后该用哪个地址访问。
 
-1. 签发证书（DNS-01，自动写/删 TXT 记录）→ 弹出「HA SSL 正在申请证书」通知
-2. 把证书写进 HA 的 HTTPS 配置 → 弹出「HA SSL 正在启用 HTTPS」通知，并自动重启一次
-3. 重启后自动探测本机 TLS 并确认配置（不会 5 分钟回退），`external_url` 同步切成 `https://`
-4. 之后每 6 小时检查一次，剩余 30 天时自动续签
+## 实体与服务
 
-此时改用 `https://<域名>:8123` 访问；手机上的 Home Assistant App 也要把服务器地址改成 https。
+| 类型 | 实体 |
+|---|---|
+| 传感器 | 证书到期时间、剩余天数 |
+| 二进制传感器 | 证书异常 |
+| 按钮 | 立即签发 |
+| 开关 | 自动续期 |
 
-## 启用 HTTPS
-
-方式 A（手动两行，最稳）：
-
-```yaml
-http:
-  ssl_certificate: /ssl/fullchain.pem
-  ssl_key: /ssl/privkey.pem
-```
-
-方式 B（用服务自动写入并重启）：
-
-```yaml
-service: ha_ssl.configure_https
-data:
-  restart: true
-```
-
-它会先备份 `configuration.yaml`，把两行插入已有 `http:` 段或追加新段，然后重启。写入后请先看日志确认无误。
-
-## 续期机制
-
-- 协调器每 6 小时读一次证书文件；
-- 剩余天数 ≤ `renew_days`（默认 30）且开启自动续期时执行签发；
-- 签发成功后如开启「续期后自动重启」则重启 HA；关闭时请自行在需要时重启，或配合 `cert_expiry` 监控。
+| 服务 | 用途 |
+|---|---|
+| `ha_ssl.renew` | 立刻签发/续期一次 |
+| `ha_ssl.configure_https` | 写入 HTTPS 配置并重启，`restart: false` 只写不重启 |
+| `ha_ssl.promote_https` | 固化待生效的 HTTPS 配置，取消自动回退 |
+| `ha_ssl.probe` | 诊断：候选 ACME 目录连通性、本机 http/https 自检、HTTP 配置存储 |
 
 ## 注意
 
-- 证书只对配置的单个域名有效，不支持泛域名。
-- 8123 启用 TLS 后明文 `http://` 立即失效；家里 Wi-Fi 访问同一域名需要路由器支持 NAT 回环（hairpin），否则内网改用 IP + 例外配置。
-- 服务商凭据保存在 HA 的配置条目中（`.storage`），建议使用最小权限的子账号 / API Token 并定期轮换。
-- 三个服务商的 zone 定位都走服务商 API，不查宿主机 DNS，因此不受路由器或运营商 DNS 劫持影响。
+- 证书只覆盖配置的那一个域名，不支持泛域名。
+- 8123 上 TLS 后明文 `http://` 立刻失效。家里 Wi-Fi 用域名访问需要路由器支持 NAT 回环；不支持就在内网用 `https://<IP>:8123` 并单独处理信任。
+- 证书目录默认 `/config/ssl`，**不是** `/ssl`——后者是加载项的挂载路径，HA 本体里没有。
+- 选项里可调提前续期天数（7–89），也可关掉自动续期或关掉「续期后重启」。关掉重启后，新证书要等下次手动重启才生效。
 
 ## 开发与发布
 
-仓库按 HA 官方自定义集成规范维护，CI 三项检查：
-
 | 工作流 | 作用 |
 |---|---|
-| Hassfest | 官方集成校验：manifest 字段与键序、文件结构、翻译 key、services 定义 |
+| Hassfest | 官方集成校验：manifest 字段与键序、文件结构、翻译、services |
 | HACS Action | HACS 发布物校验：仓库结构、`hacs.json`、集成元数据 |
-| Privacy Scan | 自写脱敏扫描：工作区与**完整 git 历史**一起查，命中即红 |
+| ACME Self Test | 假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 下载证书」，并检查包内跨模块导入 |
+| Privacy Scan | 脱敏扫描：工作区 + **完整 git 历史**一起查，命中即红 |
 
-发布物结构符合官方规范：`manifest.json` 键按字母序、`custom_components/ha_ssl/brand/` 提供亮/暗 8 个品牌图、`translations/` 中英齐全、`services.yaml` 与 `strings.json` 保持一致。
-
-脱敏扫描本地也能跑：
+本地可跑：
 
 ```bash
 python3 scripts/check_privacy.py            # 只查工作区
 python3 scripts/check_privacy.py --history  # 连 git 历史一起查
+python3 scripts/import_check.py             # 包内导入一致性
 ```
 
-检查项：邮箱、公网 IP、JWT、阿里云 AccessKey（`LTAI` 前缀）、手机号、VIN、以及不在白名单里的域名。
-输出一律打码（公开仓库的 Actions 日志本身也是公开的），文档统一用 `example.com` 这类占位域名；
-历史里发现残留用 `git filter-repo --replace-text` 重写，改完 force push。
+脱敏检查项：邮箱、公网 IP、JWT、云厂商 AccessKey、手机号、VIN、以及白名单外的域名；输出打码（Actions 日志本身也是公开的）。
+文档统一用 `example.com` 这类占位域名。历史若发现残留，用 `git filter-repo --replace-text` 重写后 force push。
 
-发布纪律：`manifest.json` 的 `version` 与 tag 同步递增、tag 指向最新 main、Release 不放 zip asset（HACS 走归档模式）、全文件 UTF-8 无 BOM。
+发布纪律：`manifest.json` 的 `version` 与 tag 同步、按十进制逐位递增（段内不进两位数）、tag 指向最新 main、Release 不放 zip asset、全文件 UTF-8 无 BOM、README 与版本日志同步。
 
 ## 版本
 
-- v1.0.20：HA 2026.8 起 HTTP 服务器设置已迁到 UI（设置 → 系统 → 网络），`configuration.yaml` 的 `http:` 段在迁移后被忽略；`ha_ssl.probe` 增加 http_storage，直接读取 `.storage` 里的 HTTP 设置，确认证书路径是否真的落库
-- v1.0.19：修正 self_probe 对 http 请求误传 `ssl=None` 导致 500
-- v1.0.18：`ha_ssl.probe` 增加 self_probe：从 HA 内部直连 127.0.0.1:8123 的 http 与 https，判断实例当前到底在提供哪种协议
-- v1.0.17：`ha_ssl.probe` 进一步输出全部 `http:` 块、块数量与证书记录文件的存在性/大小，用来诊断「配置写了但 HTTPS 没生效」
-- v1.0.16：读取证书时同样走可写回退目录（之前只修了写入，重启后又去读只读的 `/ssl`，于是误判「没有证书」并反复申请，撞上 Let's Encrypt 重复证书速率限制）；`ha_ssl.probe` 额外返回 `configuration.yaml` 里 `http:` 段的实际内容，便于确认 HTTPS 配置是否真的落盘
-- v1.0.15：证书目录默认改为 `/config/ssl`；如果配置的目录不可写（例如容器里 `/ssl` 是只读挂载），自动回退到 `/config/ssl` 并在日志里提示
-- v1.0.14：ACME 请求改为「每次新建连接 + 单请求重试 3 次」（连接复用 + 短超时 15s 连接/30s 读），应对家庭出口偶发握手卡死；签发任务在跑时协调器刷新不再把它记成失败
-- v1.0.13：新增 `ha_ssl.probe` 服务，从 HA 主机逐个探测候选 ACME 目录（Let's Encrypt / ZeroSSL / Google Trust / BuyPass，另加 GitHub 作对照），返回耗时与错误，用来判断实际网络能连哪家 CA
-- v1.0.12：ACME 流量改用自建 DoH 解析（只取 A 记录、只用 IPv4），不再依赖宿主机 DNS；目录请求失败自动重试 3 次。宿主机 DNS 被劫持或 IPv6 记录不可达时，原逻辑会在「获取 ACME 目录」一步直接超时（`TimeoutError`，消息为空）
-- v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）
-- v1.0.10：修复 finalize 之后轮询订单状态时的返回值解包错误（`_async_poll` 早已只返回响应体，调用处仍按两元组解包，导致每次签发到最后一步抛 `ValueError: too many values to unpack`）；新增 `scripts/selftest_acme.py` 与 `ACME Self Test` 工作流，用本地假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 轮询 → 下载证书」全链路，防止同类问题复发
-- v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）
-- v1.1.8：修复 `__init__.py` 引用了 `cert_manager.py` 里已被改名的函数导致整个集成 `ImportError` 无法加载的致命问题（v1.1.5–v1.1.7 受影响）；新增 `scripts/import_check.py` 静态检查包内跨模块导入，已接入 CI
-- v1.1.7：优化用户引导——配置向导逐步骤说明（域名自动识别、`/config/ssl` 与 `/ssl` 的区别、测试环境证书不被信任、各家服务商取凭据的路径与最小权限），字段级说明、错误提示给出常见原因；首次签发与自动启用 HTTPS 各发一条持久通知告知进度与重启后的访问地址
-- v1.1.6：进一步免配置——域名默认从 HA 自己的 `external_url`/`internal_url` 自动带出（只需选服务商、填凭据，域名可留空）；HTTPS 确认可用后自动把 `external_url` 的 scheme 从 http 改成 https，手机 App 和跳转链接不会再指回明文
-- v1.1.5：自动重启改到 `EVENT_HOMEASSISTANT_STARTED`——setup 阶段 HA 还没进入 running，直接调 `homeassistant.restart` 会被拒（`Error executing service`），导致首次自动启用 HTTPS 只写了配置却没重启
-- v1.1.4：修复 v1.1.1~v1.1.3 的服务注册错误——`async_register` 里多传了一个位置参数（`SERVICE_PROMOTE_HTTPS` 落在 schema 位置），导致整个集成在 setup 阶段抛 `TypeError: got multiple values for argument 'schema'` 而无法加载，自动启用 HTTPS 的逻辑因此从没跑起来
-- v1.1.3：签发后自动启用 HTTPS——集成启动时若发现 HA 的 HTTP 配置还没指向本集成的证书，自动写入待生效配置并重启；重启后自动探测 `https://127.0.0.1:8123`，通了就自动固化（取消 5 分钟回退），全程无需手动填路径或调服务；同一份证书只尝试一次，避免重启循环
-- v1.1.2：manifest 补 `dependencies: ["http"]`（v1.1.1 直接 import `homeassistant.components.http.config`，hassfest 要求声明依赖），版本号不动功能
-- v1.1.1：适配 HA 2026.11 起的 HTTP 配置新存储（`.storage/http`，`configuration.yaml` 里的 `http:` 只在首次迁移时生效、之后被忽略）。`configure_https` 现在写入待确认的新配置并重启，同时清理 configuration.yaml 里已失效、会触发修复提示的 ssl 两行；新增 `promote_https` 服务用于固化配置、取消 5 分钟自动回退；写入前先校验证书与私钥能否加载
-- v1.1.0：probe 服务补上本机协议自检（分别请求 `http://127.0.0.1:8123/api/` 与 `https://127.0.0.1:8123/api/`，直接看出 HA 当前到底在跑明文还是 TLS）；设备补 `sw_version`；版本号按十进制进位到 1.1.0（1.0.x 已用满）
-- v1.0.8：按各家 SDK 规范校正三处实现——DNSPod 的「空结果」「记录已存在」不再当成错误，列表按 name/type 过滤并分页；Cloudflare 的 `/zones` 改为 `per_page=5`（规范下限），记录列表改为按类型分页 + 本地精确比对，删除 81044 幂等；阿里云只在明确的「域名不存在」错误码时继续向上找 zone，凭据/签名/权限错误直接暴露
-- v1.0.7：支持多 DNS 服务商（阿里云云解析 / 腾讯云 DNSPod / Cloudflare），配置改为「先选服务商、再填凭据」两段式；去掉邮箱字段（ACME 账号不要求联系人）
-- v1.0.6：补 manifest `categories`（`computers_network`）、iot_class 修正为 `cloud_polling`、品牌图补齐深色主题（icon/logo 各 2 种主题共 8 个文件）
-- v1.0.5：补齐品牌图 `custom_components/ha_ssl/brand/`（icon/logo 各含 @2x），仓库补 topics，HACS Action 校验转绿
-- v1.0.4：加入 Hassfest / HACS Action / Privacy Scan 三个 CI 工作流与脱敏脚本 `scripts/check_privacy.py`
-- v1.0.3：集成代码目录与 domain 一并改为 `ha_ssl`（`custom_components/ha_ssl`），服务名变为 `ha_ssl.renew` / `ha_ssl.configure_https`，账户密钥目录改为 `/config/ha_ssl`
-- v1.0.2：仓库与项目整体更名为 ha-ssl
-- v1.0.1：集成显示名改为 HA SSL（domain 仍为 `acme_cert`，实体不变）
-- v1.0.0：首个版本，支持阿里云 dns-01 签发、自动续期、到期实体与 HTTPS 配置服务。
+<details open>
+<summary>v1.1.x</summary>
+
+- **v1.1.9**：README 精简重写——快速开始、服务商凭据表、自动流程与排障入口按官方结构整理，版本历史折叠
+- **v1.1.8**：修复 `__init__.py` 引用已被改名的 `cert_manager` 函数导致整个集成 `ImportError`（v1.1.5–v1.1.7 受影响）；新增包内导入静态检查并接入 CI
+- **v1.1.7**：配置向导逐步骤说明（域名自动识别、`/config/ssl` 与 `/ssl` 的区别、staging 不被信任、各家取凭据路径与最小权限）；错误提示补常见原因；首次签发与启用 HTTPS 各发一条持久通知
+- **v1.1.6**：域名默认从 HA 自身 URL 带出，除凭据外无需再填；HTTPS 可用后自动把 `external_url` 切成 `https://`
+- **v1.1.5**：自动重启改到 `EVENT_HOMEASSISTANT_STARTED`，避免 setup 阶段调重启被拒
+- **v1.1.4**：修复服务注册多传位置参数导致的 setup `TypeError`、自动启用 HTTPS 从未执行的问题
+- **v1.1.3**：签发后自动启用 HTTPS——写待生效配置、重启、探测成功即固化，同一证书只尝试一次
+- **v1.1.2**：manifest 补 `dependencies: ["http"]`
+- **v1.1.1**：适配 HA 2026.11 的 HTTP 配置新存储（`.storage/http`，YAML 里的 `http:` 只在首次迁移生效）；新增 `promote_https`
+- **v1.1.0**：probe 补本机协议自检；设备补 `sw_version`；版本号进位
+
+</details>
+
+<details>
+<summary>v1.0.x</summary>
+
+- **v1.0.20**：`probe` 增加 `http_storage`，直接读 `.storage` 里的 HTTP 设置
+- **v1.0.19**：修正 self_probe 对 http 请求误传 `ssl=None`
+- **v1.0.18**：`probe` 增加 `self_probe`，从 HA 内部直连本机 8123 的 http/https
+- **v1.0.17**：`probe` 输出全部 `http:` 块与证书文件状态
+- **v1.0.16**：读取证书也走可写回退目录，避免误判「没有证书」而反复申请
+- **v1.0.15**：证书目录默认改 `/config/ssl`；不可写目录自动回退并提示
+- **v1.0.14**：ACME 请求改「每次新建连接 + 单请求重试 3 次」，应对家庭出口握手卡死
+- **v1.0.13**：新增 `probe`，逐个测候选 ACME 目录连通性
+- **v1.0.12**：ACME 流量改走自建 DoH 解析（只取 A、只用 IPv4）
+- **v1.0.11**：签发失败时把异常类型与完整堆栈写进日志
+- **v1.0.10**：修复 finalize 轮询返回值解包错误；新增假 ACME 服务器自测与工作流
+- **v1.0.9**：无证书时自动完成首次签发，不再需要手动点按钮
+- **v1.0.8**：按各家 SDK 规范校正 DNSPod / Cloudflare / 阿里云的错误码、分页与幂等
+- **v1.0.7**：支持阿里云、DNSPod、Cloudflare；配置改「先选服务商、再填凭据」；去掉邮箱
+- **v1.0.6**：补 manifest `categories`、修正 `iot_class`、补齐深色主题品牌图
+- **v1.0.5**：补齐 `brand/`、仓库 topics，HACS Action 转绿
+- **v1.0.4**：加入 Hassfest / HACS Action / Privacy Scan 与脱敏脚本
+- **v1.0.3**：domain 与目录改为 `ha_ssl`，服务名改为 `ha_ssl.*`
+- **v1.0.2**：仓库更名为 ha-ssl
+- **v1.0.1**：集成显示名改为 HA SSL
+- **v1.0.0**：首个版本，阿里云 dns-01 签发 + 自动续期 + 到期实体
+
+</details>
 
 ## 许可
 
