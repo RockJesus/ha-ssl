@@ -8,6 +8,7 @@ import logging
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -88,11 +89,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     if enabled:
         _LOGGER.info(enabled)
-        hass.async_create_task(
-            hass.services.async_call(
-                "homeassistant", "restart", {}, blocking=False
+
+        async def _async_restart(_event=None) -> None:
+            """setup 阶段 HA 还没 running，restart 会被拒，等启动完成再调。"""
+            try:
+                await hass.services.async_call(
+                    "homeassistant", "restart", {}, blocking=False
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("自动重启失败，请手动重启以应用 HTTPS 配置")
+
+        if hass.is_running:
+            hass.async_create_task(_async_restart())
+        else:
+            hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED, _async_restart
             )
-        )
     return True
 
 
