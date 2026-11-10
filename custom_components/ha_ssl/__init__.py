@@ -21,10 +21,12 @@ from homeassistant.helpers.event import async_call_later
 from .cert_manager import (
     CertManager,
     async_apply_https_config,
+    async_config_uses_cert,
+    async_local_tls_ready,
     async_maybe_enable_https,
     async_maybe_promote_https,
-    async_pending_uses_cert,
     async_promote_https,
+    async_sync_external_url,
 )
 from .const import (
     CONF_RESTART,
@@ -70,19 +72,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     manager = coordinator.manager
 
-    async def _async_promote_when_listening() -> None:
-        """HA 的 HTTP 服务起得比集成晚，等本机 TLS 真能应答再固化。"""
+    async def _async_watch_tls() -> None:
+        """等本机 TLS 真能应答：先固化，再把 external_url 切到 https。"""
         for _ in range(24):
+            if not await async_local_tls_ready(hass):
+                await asyncio.sleep(10)
+                continue
             result = await async_maybe_promote_https(hass, manager.fullchain_path)
             if result:
                 _LOGGER.info(result)
-                return
-            await asyncio.sleep(10)
+            message = await async_sync_external_url(hass, manager.domain)
+            if message:
+                _LOGGER.info(message)
+            return
 
-    promote_task: asyncio.Task | None = None
-    if await async_pending_uses_cert(hass, manager.fullchain_path):
-        promote_task = hass.async_create_task(_async_promote_when_listening())
-        entry.async_on_unload(promote_task.cancel)
+    watch_task: asyncio.Task | None = None
+    if await async_config_uses_cert(hass, manager.fullchain_path):
+        watch_task = hass.async_create_task(_async_watch_tls())
+        entry.async_on_unload(watch_task.cancel)
 
     enabled = await async_maybe_enable_https(
         hass, manager.fullchain_path, manager.key_path

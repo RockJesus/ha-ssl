@@ -6,7 +6,7 @@
         "description": "Pick the DNS provider and the domain to certify. Credentials are stored locally; use a sub-account or API token limited to DNS permissions.\nProduction: {production}\nStaging: {staging}",
         "data": {
           "provider": "DNS provider",
-          "domain": "Domain (for example home.example.com)",
+          "domain": "Domain (defaults to the Home Assistant URL, usually no change needed)",
           "cert_dir": "Certificate output directory",
           "staging": "Use the Let's Encrypt staging environment"
         }
@@ -25,7 +25,8 @@
     },
     "error": {
       "invalid_auth": "The provider rejected the credentials, or the account does not own this domain",
-      "cannot_connect": "Cannot reach the provider API, check the network"
+      "cannot_connect": "Cannot reach the provider API, check the network",
+      "domain_required": "Cannot derive a domain automatically, please fill in the domain"
     },
     "abort": {
       "already_configured": "This domain is already configured"

@@ -443,6 +443,40 @@ async def _async_local_tls_ready(hass: HomeAssistant) -> bool:
         return False
 
 
+async def async_config_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
+    """Return True when stable or pending HTTP config points at our certificate."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return False
+    store = await async_get_and_load_store(hass)
+    for slot in (store.stable, store.pending):
+        if slot and slot.get("ssl_certificate") == fullchain:
+            return True
+    return False
+
+
+async def async_sync_external_url(hass: HomeAssistant, domain: str) -> str | None:
+    """Switch the advertised external URL to https once TLS is live."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    external = hass.config.external_url
+    if not external:
+        return None
+    parsed = urlparse(external)
+    if parsed.scheme == "https" or parsed.hostname != domain.lower():
+        return None
+    new_url = parsed._replace(scheme="https").geturl()
+    try:
+        await hass.config.async_update(external_url=new_url)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("更新 external_url 失败")
+        return None
+    return f"external_url 已切换为 {new_url}"
+
+
 async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     """Return True when the pending HTTP config points at our certificate."""
     try:

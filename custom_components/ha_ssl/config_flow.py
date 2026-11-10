@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import voluptuous as vol
 
@@ -47,6 +48,28 @@ CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _normalize_domain(raw: str) -> str:
+    """Accept ``https://host:8123`` or ``host`` and return the bare hostname."""
+    value = (raw or "").strip().lower()
+    if "//" in value:
+        value = urlparse(value).hostname or ""
+    elif "/" in value:
+        value = value.split("/", 1)[0]
+    if ":" in value:
+        value = value.split(":", 1)[0]
+    return value.strip()
+
+
+def _guess_domain(hass: HomeAssistant) -> str | None:
+    """Derive the certificate domain from Home Assistant's own URLs."""
+    for url in (hass.config.external_url, hass.config.internal_url):
+        if not url:
+            continue
+        host = urlparse(url).hostname
+        if host:
+            return host.lower()
+    return None
+
 async def _async_validate(
     hass: HomeAssistant, provider: str, data: dict[str, Any], domain: str
 ) -> None:
@@ -65,10 +88,21 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Pick the provider and the certificate basics."""
+        guessed = _guess_domain(self.hass)
+
         if user_input is not None:
+            domain = _normalize_domain(str(user_input.get(CONF_DOMAIN) or ""))
+            if not domain:
+                domain = _normalize_domain(guessed or "")
+            if not domain:
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=self._user_schema(guessed),
+                    errors={"base": "domain_required"},
+                )
             self._pending = {
                 CONF_PROVIDER: str(user_input[CONF_PROVIDER]),
-                CONF_DOMAIN: str(user_input[CONF_DOMAIN]).strip().lower(),
+                CONF_DOMAIN: domain,
                 CONF_CERT_DIR: str(user_input.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR),
                 CONF_STAGING: bool(user_input.get(CONF_STAGING, False)),
             }
@@ -76,28 +110,37 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_PROVIDER, default=PROVIDER_ALIYUN
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=[
-                                selector.SelectOptionDict(value=key, label=label)
-                                for key, label in PROVIDER_CLASSES.items()
-                            ],
-                            mode=selector.SelectSelectorMode.LIST,
-                        )
-                    ),
-                    vol.Required(CONF_DOMAIN): str,
-                    vol.Optional(CONF_CERT_DIR, default=DEFAULT_CERT_DIR): str,
-                    vol.Optional(CONF_STAGING, default=False): bool,
-                }
-            ),
+            data_schema=self._user_schema(guessed),
             description_placeholders={
                 "production": ACME_DIRECTORY_PRODUCTION,
                 "staging": ACME_DIRECTORY_STAGING,
+                "guessed_domain": guessed or "",
             },
+        )
+
+    def _user_schema(self, guessed: str | None) -> vol.Schema:
+        domain_field = (
+            vol.Optional(CONF_DOMAIN, default=guessed)
+            if guessed
+            else vol.Required(CONF_DOMAIN)
+        )
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_PROVIDER, default=PROVIDER_ALIYUN
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[
+                            selector.SelectOptionDict(value=key, label=label)
+                            for key, label in PROVIDER_CLASSES.items()
+                        ],
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+                domain_field: str,
+                vol.Optional(CONF_CERT_DIR, default=DEFAULT_CERT_DIR): str,
+                vol.Optional(CONF_STAGING, default=False): bool,
+            }
         )
 
     async def async_step_credentials(
