@@ -119,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.14：ACME 请求改为「每次新建连接 + 单请求重试 3 次」（连接复用 + 短超时 15s 连接/30s 读），应对家庭出口偶发握手卡死；签发任务在跑时协调器刷新不再把它记成失败
 - v1.0.13：新增 `ha_ssl.probe` 服务，从 HA 主机逐个探测候选 ACME 目录（Let's Encrypt / ZeroSSL / Google Trust / BuyPass，另加 GitHub 作对照），返回耗时与错误，用来判断实际网络能连哪家 CA
 - v1.0.12：ACME 流量改用自建 DoH 解析（只取 A 记录、只用 IPv4），不再依赖宿主机 DNS；目录请求失败自动重试 3 次。宿主机 DNS 被劫持或 IPv6 记录不可达时，原逻辑会在「获取 ACME 目录」一步直接超时（`TimeoutError`，消息为空）
 - v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）

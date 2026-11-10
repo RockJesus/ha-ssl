@@ -159,14 +159,30 @@ class AcmeClient:
         )
 
     async def _async_fetch_nonce(self) -> str:
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with self._session.head(
-            self._directory["newNonce"], timeout=timeout
-        ) as resp:
-            nonce = resp.headers.get("Replay-Nonce")
-            if not nonce:
-                raise AcmeError("ACME 服务器未返回 nonce")
-            return nonce
+        timeout = aiohttp.ClientTimeout(total=30, connect=15, sock_read=20)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with self._session.head(
+                    self._directory["newNonce"], timeout=timeout
+                ) as resp:
+                    nonce = resp.headers.get("Replay-Nonce")
+                    if not nonce:
+                        raise AcmeError("ACME 服务器未返回 nonce")
+                    return nonce
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                last_error = err
+                _LOGGER.debug(
+                    "获取 nonce 失败（第 %s 次）：%s: %s",
+                    attempt + 1,
+                    type(err).__name__,
+                    err,
+                )
+                if attempt < 2:
+                    await asyncio.sleep(4)
+        raise AcmeError(
+            f"获取 ACME nonce 失败：{type(last_error).__name__}: {last_error}"
+        )
 
     def _jws_body(self, url: str, nonce: str, payload: dict | None, use_jwk: bool) -> str:
         protected: dict[str, Any] = {"alg": "ES256", "nonce": nonce, "url": url}
@@ -197,39 +213,59 @@ class AcmeClient:
         use_jwk: bool = False,
     ) -> tuple[dict[str, Any], Any]:
         """Signed POST (or POST-as-GET when payload is None)."""
-        timeout = aiohttp.ClientTimeout(total=60)
+        timeout = aiohttp.ClientTimeout(total=45, connect=15, sock_read=30)
         problem: dict[str, Any] = {}
 
         for attempt in range(3):
             nonce = await self._async_fetch_nonce()
             body = self._jws_body(url, nonce, payload, use_jwk)
-            async with self._session.post(
-                url,
-                data=body,
-                headers={"Content-Type": "application/jose+json"},
-                timeout=timeout,
-            ) as resp:
-                text = await resp.text()
-                if resp.status < 400:
+            try:
+                async with self._session.post(
+                    url,
+                    data=body,
+                    headers={"Content-Type": "application/jose+json"},
+                    timeout=timeout,
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status < 400:
+                        try:
+                            return (
+                                json.loads(text) if text.strip() else {}
+                            ), resp.headers
+                        except ValueError as err:
+                            raise AcmeError("ACME 响应不是合法 JSON") from err
+
                     try:
-                        return (json.loads(text) if text.strip() else {}), resp.headers
-                    except ValueError as err:
-                        raise AcmeError("ACME 响应不是合法 JSON") from err
+                        problem = json.loads(text)
+                    except ValueError:
+                        problem = {"detail": text[:300]}
 
-                try:
-                    problem = json.loads(text)
-                except ValueError:
-                    problem = {"detail": text[:300]}
+                    if (
+                        str(problem.get("type", "")).endswith(":badNonce")
+                        and attempt < 2
+                    ):
+                        continue
 
-                if str(problem.get("type", "")).endswith(":badNonce") and attempt < 2:
-                    continue
-
-                message = (
-                    problem.get("detail")
-                    or problem.get("title")
-                    or f"ACME 请求失败：HTTP {resp.status}"
+                    message = (
+                        problem.get("detail")
+                        or problem.get("title")
+                        or f"ACME 请求失败：HTTP {resp.status}"
+                    )
+                    raise AcmeError(message, problem)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                _LOGGER.debug(
+                    "ACME 请求 %s 失败（第 %s 次）：%s: %s",
+                    url,
+                    attempt + 1,
+                    type(err).__name__,
+                    err,
                 )
-                raise AcmeError(message, problem)
+                if attempt < 2:
+                    await asyncio.sleep(4)
+                    continue
+                raise AcmeError(
+                    f"ACME 请求失败：{type(err).__name__}: {err}"
+                ) from err
 
         raise AcmeError("ACME 请求在重试后仍然失败", problem)
 

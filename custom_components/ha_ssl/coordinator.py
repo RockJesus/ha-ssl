@@ -62,7 +62,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             return info
 
         if not info.exists or info.valid_to is None:
-            if not auto_renew:
+            if not auto_renew or self.manager.busy:
                 return info
             _LOGGER.info("还没有证书，开始首次签发：%s", self.manager.domain)
             # 首次签发时 ssl_certificate 还没写进 configuration.yaml，
@@ -70,7 +70,12 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             return await self._async_issue_once(restart_after=False)
 
         days_left = info.days_left
-        if auto_renew and days_left is not None and days_left <= renew_days:
+        if (
+            auto_renew
+            and not self.manager.busy
+            and days_left is not None
+            and days_left <= renew_days
+        ):
             _LOGGER.info(
                 "证书剩余 %s 天，开始自动续期（阈值 %s 天）", days_left, renew_days
             )

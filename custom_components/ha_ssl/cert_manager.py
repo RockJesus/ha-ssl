@@ -101,7 +101,10 @@ class CertManager:
             self._doh = DohResolver()
             self._acme_session = aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(
-                    resolver=self._doh, ttl_dns_cache=600
+                    resolver=self._doh,
+                    ttl_dns_cache=600,
+                    force_close=True,
+                    enable_cleanup_closed=True,
                 )
             )
         return self._acme_session
