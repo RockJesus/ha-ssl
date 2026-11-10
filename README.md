@@ -119,6 +119,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 
 ## 版本
 
+- v1.0.18：`ha_ssl.probe` 增加 self_probe：从 HA 内部直连 127.0.0.1:8123 的 http 与 https，判断实例当前到底在提供哪种协议
 - v1.0.17：`ha_ssl.probe` 进一步输出全部 `http:` 块、块数量与证书记录文件的存在性/大小，用来诊断「配置写了但 HTTPS 没生效」
 - v1.0.16：读取证书时同样走可写回退目录（之前只修了写入，重启后又去读只读的 `/ssl`，于是误判「没有证书」并反复申请，撞上 Let's Encrypt 重复证书速率限制）；`ha_ssl.probe` 额外返回 `configuration.yaml` 里 `http:` 段的实际内容，便于确认 HTTPS 配置是否真的落盘
 - v1.0.15：证书目录默认改为 `/config/ssl`；如果配置的目录不可写（例如容器里 `/ssl` 是只读挂载），自动回退到 `/config/ssl` 并在日志里提示
