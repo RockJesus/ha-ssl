@@ -140,6 +140,7 @@ python3 scripts/check_privacy.py --history  # 连 git 历史一起查
 - v1.0.11：签发失败时把异常类型与完整堆栈写进日志（之前 `aiohttp` 超时抛出的 `TimeoutError` 消息为空，日志只剩「签发失败：」，无法定位是哪一步超时）
 - v1.0.10：修复 finalize 之后轮询订单状态时的返回值解包错误（`_async_poll` 早已只返回响应体，调用处仍按两元组解包，导致每次签发到最后一步抛 `ValueError: too many values to unpack`）；新增 `scripts/selftest_acme.py` 与 `ACME Self Test` 工作流，用本地假 ACME 服务器跑通「下单 → authz → dns-01 → finalize → 轮询 → 下载证书」全链路，防止同类问题复发
 - v1.0.9：修复「装好之后什么都不发生」——证书不存在时协调器原来直接返回，首次签发只能靠手动点按钮；现在自动续期开启且没有证书时会自动完成首次签发（此场景不重启 HA，因为 ssl_certificate 尚未写入 configuration.yaml）
+- v1.1.8：修复 `__init__.py` 引用了 `cert_manager.py` 里已被改名的函数导致整个集成 `ImportError` 无法加载的致命问题（v1.1.5–v1.1.7 受影响）；新增 `scripts/import_check.py` 静态检查包内跨模块导入，已接入 CI
 - v1.1.7：优化用户引导——配置向导逐步骤说明（域名自动识别、`/config/ssl` 与 `/ssl` 的区别、测试环境证书不被信任、各家服务商取凭据的路径与最小权限），字段级说明、错误提示给出常见原因；首次签发与自动启用 HTTPS 各发一条持久通知告知进度与重启后的访问地址
 - v1.1.6：进一步免配置——域名默认从 HA 自己的 `external_url`/`internal_url` 自动带出（只需选服务商、填凭据，域名可留空）；HTTPS 确认可用后自动把 `external_url` 的 scheme 从 http 改成 https，手机 App 和跳转链接不会再指回明文
 - v1.1.5：自动重启改到 `EVENT_HOMEASSISTANT_STARTED`——setup 阶段 HA 还没进入 running，直接调 `homeassistant.restart` 会被拒（`Error executing service`），导致首次自动启用 HTTPS 只写了配置却没重启

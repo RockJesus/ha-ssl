@@ -428,7 +428,7 @@ def _cert_fingerprint(fullchain: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-async def _async_local_tls_ready(hass: HomeAssistant) -> bool:
+async def async_local_tls_ready(hass: HomeAssistant) -> bool:
     """Return True when 127.0.0.1:8123 answers over TLS."""
     session = async_get_clientsession(hass)
     try:
@@ -503,7 +503,7 @@ async def async_maybe_promote_https(hass: HomeAssistant, fullchain: str) -> str 
     pending = store.pending
     if not pending or pending.get("ssl_certificate") != fullchain:
         return None
-    if not await _async_local_tls_ready(hass):
+    if not await async_local_tls_ready(hass):
         return None
     await store.async_promote_pending()
     return "本机 TLS 已确认可用，已自动固化为正式 HTTP 配置"
