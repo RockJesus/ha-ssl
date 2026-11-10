@@ -16,12 +16,17 @@ from homeassistant.core import (
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later
 
-from .cert_manager import CertManager, apply_http_config
+from .cert_manager import (
+    CertManager,
+    async_apply_https_config,
+    async_promote_https,
+)
 from .const import (
     CONF_RESTART,
     DOMAIN,
     PLATFORMS,
     SERVICE_CONFIGURE_HTTPS,
+    SERVICE_PROMOTE_HTTPS,
     SERVICE_PROBE,
     SERVICE_RENEW,
 )
@@ -141,23 +146,36 @@ def _async_register_services(hass: HomeAssistant) -> None:
             raise ValueError("还没有配置任何域名")
 
         manager = coordinator.manager
-        message = await hass.async_add_executor_job(
-            apply_http_config, manager.fullchain_path, manager.key_path
+        result = await async_apply_https_config(
+            hass, manager.fullchain_path, manager.key_path
         )
+        message = str(result["message"])
+        if result.get("yaml_cleanup"):
+            message = f"{message}；{result['yaml_cleanup']}"
         _LOGGER.info("配置 HTTPS：%s", message)
         hass.bus.async_fire(
             f"{DOMAIN}_configure_https", {"message": message}
         )
 
         restart = call.data.get(CONF_RESTART, True)
-        need_restart = "无需修改" not in message
+        need_restart = bool(result["needs_restart"])
         if restart and need_restart:
             hass.async_create_task(
                 hass.services.async_call(
                     "homeassistant", "restart", {}, blocking=False
                 )
             )
-        return {"message": message, "restart_triggered": bool(restart and need_restart)}
+        return {
+            "message": message,
+            "mode": result["mode"],
+            "restart_triggered": bool(restart and need_restart),
+        }
+
+    async def _async_handle_promote_https(call: ServiceCall) -> ServiceResponse:
+        """Confirm the pending HTTP config so it is not auto-reverted."""
+        message = await async_promote_https(hass)
+        _LOGGER.info("固化 HTTPS 配置：%s", message)
+        return {"message": message}
 
     hass.services.async_register(
         DOMAIN,
@@ -176,6 +194,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN,
         SERVICE_CONFIGURE_HTTPS,
+    SERVICE_PROMOTE_HTTPS,
         _async_handle_configure_https,
         schema=vol.Schema({vol.Optional(CONF_RESTART, default=True): cv.boolean}),
         supports_response=SupportsResponse.OPTIONAL,

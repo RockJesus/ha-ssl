@@ -17,3 +17,7 @@ configure_https:
 probe:
   name: 测试 CA 连通性
   description: 从当前 Home Assistant 主机逐个探测候选 ACME 目录的可达性，返回耗时与错误。
+
+promote_https:
+  name: 固化 HTTPS 配置
+  description: 确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。

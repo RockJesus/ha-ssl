@@ -75,13 +75,17 @@
     },
     "configure_https": {
       "name": "写入 HTTPS 配置并重启",
-      "description": "把 ssl_certificate / ssl_key 写入 configuration.yaml（自动备份），随后重启 Home Assistant 使 HTTPS 生效。",
+      "description": "把 ssl_certificate / ssl_key 写入当前 HA 版本使用的 HTTP 配置（2026.11+ 走 .storage/http 的待确认配置，旧版本改写 configuration.yaml 并自动备份），随后重启使 HTTPS 生效。",
       "fields": {
         "restart": {
           "name": "自动重启",
           "description": "写入成功后是否立刻重启 Home Assistant。"
         }
       }
+    },
+    "promote_https": {
+      "name": "固化 HTTPS 配置",
+      "description": "确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。"
     }
   }
 }

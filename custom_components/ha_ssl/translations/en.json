@@ -75,13 +75,17 @@
     },
     "configure_https": {
       "name": "Configure HTTPS and restart",
-      "description": "Write ssl_certificate / ssl_key into configuration.yaml (backup first) and restart Home Assistant.",
+      "description": "Write ssl_certificate / ssl_key into the HTTP config used by this HA version (the pending .storage/http config on 2026.11+, or configuration.yaml with a backup on older versions) and restart to apply.",
       "fields": {
         "restart": {
           "name": "Restart automatically",
           "description": "Restart Home Assistant right after writing the config."
         }
       }
+    },
+    "promote_https": {
+      "name": "Promote HTTPS config",
+      "description": "Confirm the pending HTTPS config so it is not auto-reverted (HA 2026.11+ keeps HTTP config in .storage/http and new configs start as a pending trial)."
     }
   }
 }

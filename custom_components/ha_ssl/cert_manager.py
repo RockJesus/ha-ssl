@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import shutil
+import ssl
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -377,6 +378,114 @@ class CertManager:
 
 # --------------------------------------------------------------- http config
 
+
+
+def _validate_cert_pair(fullchain: str, key: str) -> None:
+    """Load the certificate and key once so a bad pair never reaches a restart."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    try:
+        context.load_cert_chain(fullchain, key)
+    except (OSError, ssl.SSLError) as err:
+        raise ValueError(f"证书或私钥无法加载：{err}") from err
+
+
+def _strip_yaml_ssl(fullchain: str, key: str, config_file: str = CONFIG_FILE) -> str:
+    """Remove the obsolete ssl lines from configuration.yaml (HA 2026.11+)."""
+    path = pathlib.Path(config_file)
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    if "ssl_certificate" not in text:
+        return ""
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup = path.with_suffix(path.suffix + f".bak.{stamp}")
+    shutil.copy2(path, backup)
+    lines = [
+        line
+        for line in text.splitlines()
+        if not (
+            line.strip().startswith("ssl_certificate:")
+            or line.strip().startswith("ssl_key:")
+        )
+    ]
+    text = "\n".join(lines).rstrip() + "\n"
+    # Drop a http: block that became empty.
+    text = re.sub(r"^http:\s*\n(?=\S|\Z)", "", text, count=1, flags=re.MULTILINE)
+    if text.strip() and not text.endswith("\n"):
+        text += "\n"
+    path.write_text(text, encoding="utf-8")
+    return f"已清理 configuration.yaml 里已失效的 ssl 两行（备份 {backup.name}）"
+
+
+async def async_apply_https_config(
+    hass: HomeAssistant, fullchain: str, key: str
+) -> dict[str, Any]:
+    """Write the certificate into whatever HTTP config this HA version uses.
+
+    HA 2026.11 moved the HTTP config into a user-managed store
+    (``.storage/http``); configuration.yaml is only migrated once and ignored
+    afterwards. Newer versions therefore get a pending store config, older
+    versions keep the configuration.yaml rewrite.
+    """
+    await hass.async_add_executor_job(_validate_cert_pair, fullchain, key)
+
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        message = await hass.async_add_executor_job(
+            apply_http_config, fullchain, key
+        )
+        return {
+            "mode": "yaml",
+            "message": message,
+            "needs_restart": "无需修改" not in message,
+        }
+
+    store = await async_get_and_load_store(hass)
+    for existing in (store.pending, store.stable):
+        if existing and (
+            existing.get("ssl_certificate") == fullchain
+            and existing.get("ssl_key") == key
+        ):
+            cleanup = await hass.async_add_executor_job(
+                _strip_yaml_ssl, fullchain, key
+            )
+            return {
+                "mode": "storage",
+                "message": "HTTP 配置里已是这套证书，无需修改"
+                + (f"；{cleanup}" if cleanup else ""),
+                "needs_restart": False,
+            }
+
+    config = dict(store.stable)
+    config["ssl_certificate"] = fullchain
+    config["ssl_key"] = key
+    await store.async_set_pending(config)
+    cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
+    return {
+        "mode": "storage",
+        "message": "已写入 HA 的 HTTP 配置存储（重启后生效；重启后请在 5 分钟内确认可访问并固化，否则会自动回退）",
+        "needs_restart": True,
+        "yaml_cleanup": cleanup,
+    }
+
+
+async def async_promote_https(hass: HomeAssistant) -> str:
+    """Confirm the pending HTTP config so it does not auto-revert."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError as err:
+        raise ValueError("当前 Home Assistant 版本不需要手动固化 HTTPS 配置") from err
+
+    store = await async_get_and_load_store(hass)
+    if store.pending is None:
+        return "没有待确认的 HTTP 配置（当前已是固化状态）"
+    await store.async_promote_pending()
+    return "已固化为正式 HTTP 配置，自动回退已取消"
 
 def apply_http_config(fullchain: str, key: str, config_file: str = CONFIG_FILE) -> str:
     """Insert the ssl_certificate / ssl_key lines into configuration.yaml."""

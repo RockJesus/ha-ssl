@@ -81,6 +81,7 @@ DOH_RESOLVERS = (
 SERVICE_RENEW = "renew"
 SERVICE_CONFIGURE_HTTPS = "configure_https"
 SERVICE_PROBE = "probe"
+SERVICE_PROMOTE_HTTPS = "promote_https"
 ATTR_RESTART = "restart"
 
 # 平台
