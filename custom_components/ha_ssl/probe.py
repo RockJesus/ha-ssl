@@ -66,14 +66,28 @@ def read_http_section() -> dict[str, object]:
         return {"exists": False}
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
-    http_lines: list[str] = []
+    blocks: list[list[str]] = []
     for index, line in enumerate(lines):
         if line.strip() == "http:":
-            http_lines = lines[index : index + 6]
-            break
+            blocks.append(lines[index : index + 8])
+
+    def _stat(path: str) -> dict[str, object]:
+        item = pathlib.Path(path)
+        try:
+            info = item.stat()
+            return {"path": path, "exists": True, "size": info.st_size}
+        except OSError:
+            return {"path": path, "exists": False}
+
     return {
         "exists": True,
         "has_ssl_certificate": "ssl_certificate" in text,
-        "http_block": http_lines,
+        "http_block_count": len(blocks),
+        "http_blocks": blocks,
         "tail": lines[-6:],
+        "certs": [
+            _stat("/config/ssl/fullchain.pem"),
+            _stat("/config/ssl/privkey.pem"),
+            _stat("/ssl/fullchain.pem"),
+        ],
     }
