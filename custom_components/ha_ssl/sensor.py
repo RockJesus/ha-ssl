@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .cert_manager import CertInfo
-from .const import CONF_PROVIDER, DOMAIN, MANUFACTURER
+from .const import CONF_PROVIDER, DOMAIN, INTEGRATION_VERSION, MANUFACTURER
 from .coordinator import AcmeCertCoordinator
 from .providers import PROVIDER_CLASSES
 
@@ -52,6 +52,7 @@ class _CertBaseEntity(CoordinatorEntity[AcmeCertCoordinator]):
             name=f"HA SSL · {self._domain}",
             manufacturer=MANUFACTURER,
             model=f"DNS-01 · {provider_label}",
+            sw_version=INTEGRATION_VERSION,
         )
 
     @property

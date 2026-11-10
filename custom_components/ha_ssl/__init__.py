@@ -26,7 +26,12 @@ from .const import (
     SERVICE_RENEW,
 )
 from .coordinator import AcmeCertCoordinator
-from .probe import async_probe_cas, read_http_section, read_http_storage
+from .probe import (
+    async_probe_cas,
+    async_probe_self,
+    read_http_section,
+    read_http_storage,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,6 +116,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
         )
         try:
             results = await async_probe_cas(session)
+            try:
+                self_results = await async_probe_self(session)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("本机协议自检失败")
+                self_results = []
         finally:
             await session.close()
             await resolver.close()
@@ -120,6 +130,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             _LOGGER.info("CA 探测：%s", item)
         return {
             "results": list(results),
+            "self_probe": list(self_results),
             "http_config": config_info,
             "http_storage": storage_info,
         }

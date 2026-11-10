@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import pathlib
 from datetime import timedelta
+
+try:
+    INTEGRATION_VERSION = json.loads(
+        (pathlib.Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+    )["version"]
+except (OSError, ValueError, KeyError):
+    INTEGRATION_VERSION = ""
 
 DOMAIN = "ha_ssl"
 MANUFACTURER = "HA SSL"
