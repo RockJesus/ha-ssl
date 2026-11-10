@@ -33,6 +33,7 @@ from .const import (
     CONF_DOMAIN,
     CONF_PROVIDER,
     CONF_STAGING,
+    FALLBACK_CERT_DIR,
     DEFAULT_CERT_DIR,
     DEFAULT_WAIT_TIMEOUT,
     DOH_RESOLVERS,
@@ -90,6 +91,7 @@ class CertManager:
         self.hass = hass
         self.entry = entry
         self._lock = asyncio.Lock()
+        self._writable_cert_dir: str | None = None
         self._acme_session: aiohttp.ClientSession | None = None
         self._doh: DohResolver | None = None
         self.last_error: str | None = None
@@ -126,6 +128,8 @@ class CertManager:
     @property
     def cert_dir(self) -> str:
         """Directory holding the certificate files."""
+        if self._writable_cert_dir is not None:
+            return self._writable_cert_dir
         return str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
 
     @property
@@ -273,8 +277,32 @@ class CertManager:
             return await self.hass.async_add_executor_job(self.read_cert)
 
     def _ensure_dirs(self) -> None:
-        pathlib.Path(self.cert_dir).mkdir(parents=True, exist_ok=True)
-        pathlib.Path(ACCOUNT_KEY_DIR).mkdir(parents=True, exist_ok=True)
+        configured = str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
+        candidates = [configured]
+        if configured != FALLBACK_CERT_DIR:
+            candidates.append(FALLBACK_CERT_DIR)
+
+        for candidate in candidates:
+            try:
+                path = pathlib.Path(candidate)
+                path.mkdir(parents=True, exist_ok=True)
+                probe = path / ".ha_ssl_write_test"
+                probe.write_text("ok", encoding="utf-8")
+                probe.unlink()
+            except OSError as err:
+                _LOGGER.warning("证书目录 %s 不可写（%s），尝试下一个", candidate, err)
+                continue
+            if candidate != configured:
+                _LOGGER.warning(
+                    "配置的证书目录 %s 不可写，改用 %s；请同步更新 HTTPS 配置里的路径",
+                    configured,
+                    candidate,
+                )
+            self._writable_cert_dir = candidate
+            pathlib.Path(ACCOUNT_KEY_DIR).mkdir(parents=True, exist_ok=True)
+            return
+
+        raise CertIssueError(f"没有可写的证书目录：{', '.join(candidates)}")
 
     def _write_files(self, cert_pem: str, key_pem: bytes) -> None:
         chain_path = pathlib.Path(self.fullchain_path)
