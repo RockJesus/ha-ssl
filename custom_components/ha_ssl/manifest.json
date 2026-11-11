@@ -8,13 +8,10 @@
     "@RockJesus"
   ],
   "config_flow": true,
-  "dependencies": [
-    "http"
-  ],
   "documentation": "https://github.com/RockJesus/ha-ssl",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/RockJesus/ha-ssl/issues",
   "requirements": [],
-  "version": "1.2.2"
+  "version": "1.2.3"
 }

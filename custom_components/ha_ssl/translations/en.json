@@ -48,24 +48,34 @@
     "step": {
       "init": {
         "title": "Renewal and dynamic DNS",
-        "description": "Certificates renew 30 days before expiry by default, and Home Assistant restarts once to load the new one.\n\n**Dynamic DNS** is optional. When enabled the integration periodically reads this installation's public IPv4 and rewrites the A record of {domain} whenever it changes — the same job Lucky or your router's DDNS used to do. It only edits the DNS record; certificate issuance is unaffected.",
+        "description": "Renewal happens 30 days before expiry and Home Assistant restarts once afterwards.\n\n**Dynamic DNS (optional)**: keeps the records of {domain} pointed at this host. Supports A (IPv4), AAAA (IPv6) and one optional CNAME alias. DNS only, it never touches the certificate.",
         "data": {
           "auto_renew": "Automatic renewal",
           "renew_days": "Renew this many days before expiry",
           "restart_after_renew": "Restart Home Assistant after renewal",
           "ddns_enabled": "Enable dynamic DNS",
           "ddns_record": "Record to keep updated",
-          "ddns_interval": "Check interval"
+          "ddns_interval": "Check interval",
+          "ddns_record_types": "Record types",
+          "ddns_cname_record": "CNAME record name",
+          "ddns_cname_target": "CNAME target"
         },
         "data_description": {
           "auto_renew": "When off, renewal only happens via the issue button",
           "renew_days": "Renew when fewer days are left; 7–89",
           "restart_after_renew": "Home Assistant reads the certificate only at startup",
-          "ddns_enabled": "Compares the public IP with the A record and updates it through the same DNS provider",
-          "ddns_record": "Empty means the certificate domain. Must exist in the provider account; a missing A record is created automatically",
-          "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default"
+          "ddns_enabled": "Compare the public address with the A/AAAA records on a schedule and rewrite them through the same DNS provider API",
+          "ddns_record": "Empty means the certificate domain. Must exist in this provider account; missing records are created automatically",
+          "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default",
+          "ddns_record_types": "Pick any of A (IPv4), AAAA (IPv6), CNAME (alias). AAAA needs a routable public IPv6 on this host",
+          "ddns_cname_record": "Optional alias record, for example home. Leave empty to skip CNAME; must differ from the A/AAAA name",
+          "ddns_cname_target": "Hostname the CNAME points to (for example another DDNS name); required when CNAME is selected"
         }
       }
+    },
+    "error": {
+      "invalid_cname": "CNAME needs both a record name and a valid target hostname",
+      "cname_conflict": "The CNAME name cannot equal the A/AAAA name, DNS forbids CNAME next to other records"
     }
   },
   "entity": {
@@ -78,6 +88,9 @@
       },
       "public_ip": {
         "name": "Public IP"
+      },
+      "public_ipv6": {
+        "name": "Public IPv6"
       }
     },
     "binary_sensor": {

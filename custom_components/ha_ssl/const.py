@@ -30,6 +30,9 @@ CONF_RESTART = "restart"
 CONF_DDNS_ENABLED = "ddns_enabled"
 CONF_DDNS_RECORD = "ddns_record"
 CONF_DDNS_INTERVAL = "ddns_interval"
+CONF_DDNS_RECORD_TYPES = "ddns_record_types"
+CONF_DDNS_CNAME_RECORD = "ddns_cname_record"
+CONF_DDNS_CNAME_TARGET = "ddns_cname_target"
 
 # 服务商凭据
 CONF_ALIYUN_ACCESS_KEY_ID = "aliyun_access_key_id"
@@ -59,7 +62,8 @@ DEFAULT_DDNS_ENABLED = False
 DEFAULT_DDNS_INTERVAL = 5
 DDNS_MIN_INTERVAL = 1
 DDNS_MAX_INTERVAL = 1440
-DDNS_RECORD_TYPE = "A"
+DDNS_RECORD_TYPES = ("A", "AAAA", "CNAME")
+DEFAULT_DDNS_RECORD_TYPES = ["A"]
 DDNS_TTL = 600
 PUBLIC_IP_TIMEOUT = 10
 PUBLIC_IP_ENDPOINTS = (
@@ -67,6 +71,12 @@ PUBLIC_IP_ENDPOINTS = (
     "https://ipv4.icanhazip.com",
     "https://ifconfig.me/ip",
     "https://ipinfo.io/ip",
+)
+PUBLIC_IPV6_ENDPOINTS = (
+    "https://api6.ipify.org",
+    "https://ipv6.icanhazip.com",
+    "https://ifconfig.co/ip",
+    "https://ipv6.ipinfo.io/ip",
 )
 
 CERT_FILE_NAME = "fullchain.pem"

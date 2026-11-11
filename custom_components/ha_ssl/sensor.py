@@ -49,6 +49,7 @@ async def async_setup_entry(
     ddns: DdnsCoordinator | None = getattr(coordinator, "ddns", None)
     if ddns is not None:
         entities.append(PublicIpSensor(coordinator, ddns))
+        entities.append(PublicIpv6Sensor(coordinator, ddns))
     async_add_entities(entities)
 
 
@@ -125,11 +126,10 @@ class CertDaysLeftSensor(_CertBaseEntity, SensorEntity):
         return self.info.days_left if self.info.exists else None
 
 
-class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
-    """Public IPv4 of this installation, i.e. what the A record should hold."""
+class _DdnsBaseSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
+    """Common wiring for the public address sensors."""
 
     _attr_has_entity_name = True
-    _attr_translation_key = "public_ip"
     _attr_icon = "mdi:ip-network"
 
     def __init__(
@@ -137,7 +137,7 @@ class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
     ) -> None:
         """Bind to the DDNS loop but share the certificate device."""
         super().__init__(ddns)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_public_ip"
+        self._cert_coordinator = coordinator
         self._attr_device_info = _device_info(coordinator)
 
     @property
@@ -151,11 +151,6 @@ class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
         return self.ddns.data
 
     @property
-    def native_value(self) -> str | None:
-        """Return the detected public IPv4."""
-        return self.ddns_state.public_ip if self.ddns_state else None
-
-    @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Expose the record, where it lives and the last error."""
         state = self.ddns_state
@@ -163,9 +158,11 @@ class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
             return {}
         return {
             "record": state.record,
+            "record_types": list(self.ddns.record_types),
             "record_value": state.record_value,
             "zone": state.zone,
             "source": state.source,
+            "source_v6": state.source_v6,
             "changed": state.changed,
             "checked_at": state.checked_at.isoformat()
             if state.checked_at
@@ -174,7 +171,56 @@ class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
             if state.last_change_at
             else None,
             "last_error": state.last_error,
+            "cname_record": self.ddns.cname_record or None,
+            "cname_target": self.ddns.cname_target or None,
+            "records": {
+                rtype: {
+                    "name": item.name,
+                    "value": item.value,
+                    "previous": item.previous,
+                    "changed": item.changed,
+                    "error": item.error,
+                }
+                for rtype, item in state.results.items()
+            },
             "update_interval_minutes": self.ddns.update_interval.total_seconds() // 60
             if self.ddns.update_interval
             else None,
         }
+
+
+class PublicIpSensor(_DdnsBaseSensor):
+    """Public IPv4 of this installation, i.e. what the A record should hold."""
+
+    _attr_translation_key = "public_ip"
+
+    def __init__(
+        self, coordinator: AcmeCertCoordinator, ddns: DdnsCoordinator
+    ) -> None:
+        """Name the entity after the integration (has_entity_name is inherited)."""
+        super().__init__(coordinator, ddns)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_public_ip"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the detected public IPv4."""
+        return self.ddns_state.public_ip if self.ddns_state else None
+
+
+class PublicIpv6Sensor(_DdnsBaseSensor):
+    """Public IPv6 of this installation, i.e. what the AAAA record should hold."""
+
+    _attr_translation_key = "public_ipv6"
+    _attr_icon = "mdi:ip"
+
+    def __init__(
+        self, coordinator: AcmeCertCoordinator, ddns: DdnsCoordinator
+    ) -> None:
+        """Initialize the IPv6 sensor."""
+        super().__init__(coordinator, ddns)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_public_ipv6"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the detected public IPv6."""
+        return self.ddns_state.public_ipv6 if self.ddns_state else None

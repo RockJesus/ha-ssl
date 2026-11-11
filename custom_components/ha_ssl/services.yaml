@@ -24,4 +24,4 @@ promote_https:
 
 update_ddns:
   name: 立即更新动态域名
-  description: 立刻查询公网 IPv4 并与 A 记录比对，必要时通过 DNS 服务商接口改写记录。
+  description: 立刻查询公网 IPv4/IPv6 并与 A/AAAA 记录比对，必要时通过 DNS 服务商接口改写记录（CNAME 也会一并核对）。

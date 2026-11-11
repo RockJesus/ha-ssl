@@ -48,24 +48,34 @@
     "step": {
       "init": {
         "title": "续期与动态域名",
-        "description": "证书默认提前 30 天自动续签，续签成功后重启一次以加载新证书。\n\n**动态域名（DDNS）**：可选。打开后会定时查询本机公网 IPv4，并在地址变化时改写 {domain} 所在域名的 A 记录——这就是原来交给 Lucky / 路由器 DDNS 的那件事。只改 DNS 记录，不参与证书签发。",
+        "description": "证书默认提前 30 天自动续签，续签成功后重启一次以加载新证书。\n\n**动态域名（DDNS）**：可选。打开后会定时查询本机公网地址，并在地址变化时改写 {domain} 所在域名的记录——这就是原来交给 Lucky / 路由器 DDNS 的那件事。记录类型支持 A（IPv4）、AAAA（IPv6），以及单独一条 CNAME 别名；只改 DNS 记录，不参与证书签发。",
         "data": {
           "auto_renew": "自动续期",
           "renew_days": "提前多少天续期",
           "restart_after_renew": "续期成功后自动重启 Home Assistant",
           "ddns_enabled": "启用动态域名解析",
           "ddns_record": "要更新的域名",
-          "ddns_interval": "检查间隔"
+          "ddns_interval": "检查间隔",
+          "ddns_record_types": "要维护的记录类型",
+          "ddns_cname_record": "CNAME 记录名",
+          "ddns_cname_target": "CNAME 指向"
         },
         "data_description": {
           "auto_renew": "关闭后只有点「立即签发」按钮才会续期",
           "renew_days": "剩余天数低于该值时开始续签，可选 7–89 天",
           "restart_after_renew": "Home Assistant 只在启动时读取证书，不重启则新证书不生效；关闭后需你手动重启",
-          "ddns_enabled": "定时比对公网 IP 与 A 记录，变化时通过同一个 DNS 服务商接口改写记录",
-          "ddns_record": "留空则使用证书域名。只能填这个服务商账号下已有的域名或子域名；记录不存在时会自动创建 A 记录",
-          "ddns_interval": "查询公网 IP 并检查记录的间隔，默认 5 分钟"
+          "ddns_enabled": "定时比对公网地址与 A/AAAA 记录，变化时通过同一个 DNS 服务商接口改写记录",
+          "ddns_record": "留空则使用证书域名。只能填该服务商账号下已有的域名或子域名；记录不存在时会自动创建",
+          "ddns_interval": "查询公网 IP 并检查记录的间隔，默认 5 分钟",
+          "ddns_record_types": "可多选：A（IPv4）、AAAA（IPv6）、CNAME（别名）。选 AAAA 需要本机有可路由的公网 IPv6",
+          "ddns_cname_record": "可选的别名记录，例如 home。留空则不维护 CNAME；不能和上面 A/AAAA 用同一个名字",
+          "ddns_cname_target": "CNAME 指向的目标主机名（例如别的 DDNS 域名），只在勾选 CNAME 时必填"
         }
       }
+    },
+    "error": {
+      "invalid_cname": "填了 CNAME 就需要同时填写记录名和合法的目标主机名",
+      "cname_conflict": "CNAME 记录名不能和 A/AAAA 的记录名相同（DNS 不允许同名 CNAME 与其他记录共存）"
     }
   },
   "entity": {
@@ -78,6 +88,9 @@
       },
       "public_ip": {
         "name": "公网 IP"
+      },
+      "public_ipv6": {
+        "name": "公网 IPv6"
       }
     },
     "binary_sensor": {

@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .ddns import is_hostname, normalize_record_types
 from .const import (
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
@@ -21,9 +22,12 @@ from .const import (
     CONF_AUTO_RENEW,
     CONF_CERT_DIR,
     CONF_CLOUDFLARE_API_TOKEN,
+    CONF_DDNS_CNAME_RECORD,
+    CONF_DDNS_CNAME_TARGET,
     CONF_DDNS_ENABLED,
     CONF_DDNS_INTERVAL,
     CONF_DDNS_RECORD,
+    CONF_DDNS_RECORD_TYPES,
     CONF_DNSPOD_TOKEN,
     CONF_DNSPOD_TOKEN_ID,
     CONF_DOMAIN,
@@ -35,6 +39,7 @@ from .const import (
     DEFAULT_CERT_DIR,
     DEFAULT_DDNS_ENABLED,
     DEFAULT_DDNS_INTERVAL,
+    DEFAULT_DDNS_RECORD_TYPES,
     DEFAULT_RENEW_DAYS,
     DEFAULT_RESTART_AFTER_RENEW,
     DDNS_MAX_INTERVAL,
@@ -224,12 +229,30 @@ class HaSslOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            types = normalize_record_types(user_input.get(CONF_DDNS_RECORD_TYPES))
+            user_input[CONF_DDNS_RECORD_TYPES] = types
+            cname_record = str(user_input.get(CONF_DDNS_CNAME_RECORD) or "").strip()
+            cname_target = str(user_input.get(CONF_DDNS_CNAME_TARGET) or "").strip()
+            main_record = (
+                str(user_input.get(CONF_DDNS_RECORD) or "").strip()
+                or str(self.config_entry.data.get(CONF_DOMAIN) or "").strip()
+            )
+            if "CNAME" in types:
+                if not cname_record or not is_hostname(cname_target):
+                    errors["base"] = "invalid_cname"
+                elif cname_record.rstrip(".").lower() == main_record.rstrip(".").lower() and (
+                    "A" in types or "AAAA" in types
+                ):
+                    errors["base"] = "cname_conflict"
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
-        options = self.config_entry.options
+        options = {**self.config_entry.options, **(user_input or {})}
         return self.async_show_form(
             step_id="init",
+            errors=errors,
             data_schema=vol.Schema(
                 {
                     vol.Optional(
@@ -261,6 +284,28 @@ class HaSslOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_DDNS_RECORD,
                         default=str(options.get(CONF_DDNS_RECORD) or ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_DDNS_RECORD_TYPES,
+                        default=normalize_record_types(
+                            options.get(
+                                CONF_DDNS_RECORD_TYPES, DEFAULT_DDNS_RECORD_TYPES
+                            )
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=["A", "AAAA", "CNAME"],
+                            multiple=True,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_DDNS_CNAME_RECORD,
+                        default=str(options.get(CONF_DDNS_CNAME_RECORD) or ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_DDNS_CNAME_TARGET,
+                        default=str(options.get(CONF_DDNS_CNAME_TARGET) or ""),
                     ): str,
                     vol.Optional(
                         CONF_DDNS_INTERVAL,
