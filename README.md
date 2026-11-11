@@ -137,6 +137,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <details open>
 <summary>v1.2.x</summary>
 
+- **v1.2.9**：`configure_https` 只在“当前生效配置”已是目标证书时才跳过；pending 与 stable 不一致时重写并在重启后生效
 - **v1.2.8**：签发改用独立 ACME 会话，修掉重载集成时旧会话被关导致 `Session is closed` 的问题
 - **v1.2.7**：ACME 自检脚本跟进多域名回调签名（`prepare(identifier, value)`），无功能变化
 - **v1.2.6**：动态域名改为「记录清单」，可同时维护任意条 A / AAAA / CNAME / TXT（含固定值、TTL、变更历史、变更通知与 `ha_ssl_ddns_changed` 事件）；证书支持多域名与泛域名、到期/失败告警与 Webhook、HTTPS 端口与 TLS 档位、`diagnose` / `verify_cert` / `backup_cert` / `restore_cert` 四个服务；新增「维护的记录数」传感器

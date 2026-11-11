@@ -652,20 +652,21 @@ async def async_apply_https_config(
         }
 
     store = await async_get_and_load_store(hass)
-    for existing in (store.pending, store.stable):
-        if existing and (
-            existing.get("ssl_certificate") == fullchain
-            and existing.get("ssl_key") == key
-        ):
-            cleanup = await hass.async_add_executor_job(
-                _strip_yaml_ssl, fullchain, key
-            )
-            return {
-                "mode": "storage",
-                "message": "HTTP 配置里已是这套证书，无需修改"
-                + (f"；{cleanup}" if cleanup else ""),
-                "needs_restart": False,
-            }
+    def matches(cfg: dict[str, Any] | None) -> bool:
+        return bool(cfg) and (
+            cfg.get("ssl_certificate") == fullchain
+            and cfg.get("ssl_key") == key
+        )
+    # 只有“当前生效的配置”已经是这套证书才算无需修改；pending 匹配但
+    # stable 仍是旧证书时，必须重写 pending 并在重启后生效。
+    if matches(store.stable) and (store.pending is None or matches(store.pending)):
+        cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
+        return {
+            "mode": "storage",
+            "message": "HTTP 配置里已是这套证书，无需修改"
+            + (f"；{cleanup}" if cleanup else ""),
+            "needs_restart": False,
+        }
 
     config = dict(store.stable)
     config["ssl_certificate"] = fullchain
