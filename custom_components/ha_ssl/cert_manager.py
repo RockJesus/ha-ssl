@@ -97,33 +97,24 @@ class CertManager:
         self.entry = entry
         self._lock = asyncio.Lock()
         self._writable_cert_dir: str | None = None
-        self._acme_session: aiohttp.ClientSession | None = None
-        self._doh: DohResolver | None = None
         self.last_error: str | None = None
         self.last_issued_at: datetime | None = None
 
-    def _get_acme_session(self) -> aiohttp.ClientSession:
-        """Session for ACME traffic: resolve through DoH, IPv4 only."""
-        if self._acme_session is None or self._acme_session.closed:
-            self._doh = DohResolver()
-            self._acme_session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(
-                    resolver=self._doh,
-                    ttl_dns_cache=600,
-                    force_close=True,
-                    enable_cleanup_closed=True,
-                )
+    def _create_acme_session(self) -> tuple[aiohttp.ClientSession, DohResolver]:
+        """Fresh session per issuance: resolve through DoH, IPv4 only."""
+        doh = DohResolver()
+        session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(
+                resolver=doh,
+                ttl_dns_cache=600,
+                force_close=True,
+                enable_cleanup_closed=True,
             )
-        return self._acme_session
+        )
+        return session, doh
 
     async def async_close(self) -> None:
-        """Release the dedicated ACME session."""
-        if self._acme_session is not None and not self._acme_session.closed:
-            await self._acme_session.close()
-        if self._doh is not None:
-            await self._doh.close()
-        self._acme_session = None
-        self._doh = None
+        """Nothing to release: sessions are owned by each issuance."""
 
     @property
     def domain(self) -> str:
@@ -242,6 +233,20 @@ class CertManager:
     # --------------------------------------------------------------- issuing
 
     async def async_issue(self) -> CertInfo:
+        """Issue with its own short-lived ACME session.
+
+        The session must not be reused across reloads: unloading an entry
+        closes it, and an issuance still running would then fail with
+        "Session is closed".
+        """
+        session, doh = self._create_acme_session()
+        try:
+            return await self._async_issue_inner(session)
+        finally:
+            await session.close()
+            await doh.close()
+
+    async def _async_issue_inner(self, acme_session: aiohttp.ClientSession) -> CertInfo:
         """Run a full dns-01 issuance and write the files."""
         if self._lock.locked():
             raise CertIssueError("已有一签发任务在运行，请稍后再试")
@@ -263,7 +268,7 @@ class CertManager:
                 load_or_create_account_key, account_key_path
             )
 
-            client = AcmeClient(self._get_acme_session(), directory, account_key)
+            client = AcmeClient(acme_session, directory, account_key)
             provider = async_create_provider(session, provider_key, dict(self.entry.data))
 
             try:
