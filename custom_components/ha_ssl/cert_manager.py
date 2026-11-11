@@ -510,17 +510,22 @@ async def async_config_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     return False
 
 
-async def async_sync_external_url(hass: HomeAssistant, domain: str) -> str | None:
-    """Switch the advertised external URL to https once TLS is live."""
+async def async_sync_external_url(
+    hass: HomeAssistant, domain: str, port: int | None = None
+) -> str | None:
+    """Point the advertised external URL at the certificate domain over https."""
     from urllib.parse import urlparse  # noqa: PLC0415
 
     external = hass.config.external_url
     if not external:
         return None
     parsed = urlparse(external)
-    if parsed.scheme == "https" or parsed.hostname != domain.lower():
+    target_port = port or parsed.port or 8123
+    if parsed.scheme == "https" and parsed.hostname == domain.lower() and parsed.port == target_port:
         return None
-    new_url = parsed._replace(scheme="https").geturl()
+    new_url = parsed._replace(
+        scheme="https", netloc=f"{domain.lower()}:{target_port}"
+    ).geturl()
     try:
         await hass.config.async_update(external_url=new_url)
     except Exception:  # noqa: BLE001

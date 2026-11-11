@@ -137,6 +137,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <details open>
 <summary>v1.2.x</summary>
 
+- **v1.3.1**：`external_url` 也自动对齐——签发/续期成功后改成 `https://<证书域名>:<端口>`，不再要求原主机名与证书域名一致
 - **v1.3.0**：签发/续期成功后自动把 HTTPS 配置对齐到 `/config/ssl`（不再只覆盖文件不换路径），必要时自动重启使证书生效
 - **v1.2.9**：`configure_https` 只在“当前生效配置”已是目标证书时才跳过；pending 与 stable 不一致时重写并在重启后生效
 - **v1.2.8**：签发改用独立 ACME 会话，修掉重载集成时旧会话被关导致 `Session is closed` 的问题

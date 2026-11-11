@@ -13,7 +13,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .cert_manager import CertInfo, CertIssueError, CertManager, async_apply_https_config
+from .cert_manager import (
+    CertInfo,
+    CertIssueError,
+    CertManager,
+    async_apply_https_config,
+    async_sync_external_url,
+)
 from .const import (
     CONF_AUTO_RENEW,
     CONF_EXPIRY_ALERT_DAYS,
@@ -153,6 +159,17 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
         except Exception:  # noqa: BLE001
             _LOGGER.exception("证书已签发，但写入 HTTPS 配置失败")
             return False
+        try:
+            message = await async_sync_external_url(
+                self.hass,
+                self.manager.domain,
+                int(options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT) or 0) or None,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("更新 external_url 失败")
+        else:
+            if message:
+                _LOGGER.info(message)
         if result.get("needs_restart"):
             _LOGGER.info("HTTPS 配置已对齐 /config/ssl，重启后生效")
             return True
