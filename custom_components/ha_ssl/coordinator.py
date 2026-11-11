@@ -13,15 +13,18 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .cert_manager import CertInfo, CertIssueError, CertManager
+from .cert_manager import CertInfo, CertIssueError, CertManager, async_apply_https_config
 from .const import (
     CONF_AUTO_RENEW,
     CONF_EXPIRY_ALERT_DAYS,
+    CONF_HTTPS_PORT,
     CONF_NOTIFY_WEBHOOK,
     CONF_RENEW_DAYS,
     CONF_RESTART_AFTER_RENEW,
+    CONF_TLS_PROFILE,
     DEFAULT_AUTO_RENEW,
     DEFAULT_EXPIRY_ALERT_DAYS,
+    DEFAULT_HTTPS_PORT,
     DEFAULT_RENEW_DAYS,
     DEFAULT_RESTART_AFTER_RENEW,
     DEFAULT_UPDATE_INTERVAL,
@@ -127,13 +130,39 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             )
             return info
 
-        if restart_after:
+        needs_restart = await self._async_align_https()
+        if restart_after or needs_restart:
             await self._async_restart_ha()
         return info
+
+    async def _async_align_https(self) -> bool:
+        """Point HA's HTTP config at our certificate after a successful issue.
+
+        Renewals keep the same path, but the configured path may still point at
+        someone else's files (e.g. a previous DDNS tool), so realign every time.
+        """
+        options = self.entry.options
+        try:
+            result = await async_apply_https_config(
+                self.hass,
+                self.manager.fullchain_path,
+                self.manager.key_path,
+                port=int(options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT) or 0) or None,
+                tls_profile=str(options.get(CONF_TLS_PROFILE) or "") or None,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("证书已签发，但写入 HTTPS 配置失败")
+            return False
+        if result.get("needs_restart"):
+            _LOGGER.info("HTTPS 配置已对齐 /config/ssl，重启后生效")
+            return True
+        return False
 
     async def async_force_issue(self) -> CertInfo:
         """Issue immediately (button / service)."""
         info = await self.manager.async_issue()
+        if await self._async_align_https():
+            self.hass.async_create_task(self._async_restart_ha())
         self.async_set_updated_data(info)
         return info
 
