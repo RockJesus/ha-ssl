@@ -403,7 +403,11 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             "zone": state.zone,
             "condition": "updated"
             if state.changed
-            else ("unchanged" if not state.last_error else "failed"),
+            else (
+                "unchanged"
+                if any(not item.error for item in state.results.values())
+                else "failed"
+            ),
             "checked_at": state.checked_at.isoformat() if state.checked_at else None,
             "last_change_at": state.last_change_at.isoformat()
             if state.last_change_at
