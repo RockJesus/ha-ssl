@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date
+
+import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .cert_manager import CertInfo, CertIssueError, CertManager
 from .const import (
     CONF_AUTO_RENEW,
+    CONF_EXPIRY_ALERT_DAYS,
+    CONF_NOTIFY_WEBHOOK,
     CONF_RENEW_DAYS,
     CONF_RESTART_AFTER_RENEW,
     DEFAULT_AUTO_RENEW,
+    DEFAULT_EXPIRY_ALERT_DAYS,
     DEFAULT_RENEW_DAYS,
     DEFAULT_RESTART_AFTER_RENEW,
     DEFAULT_UPDATE_INTERVAL,
@@ -46,6 +53,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
         self.entry = entry
         self.manager = manager
         self._first_run = True
+        self._last_alert_day: date | None = None
 
     async def _async_update_data(self) -> CertInfo:
         """Read the certificate and renew it when it is close to expiry."""
@@ -86,6 +94,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             return await self._async_issue_once(restart_after=False)
 
         days_left = info.days_left
+        await self._async_alert_if_due(info)
         if (
             auto_renew
             and not self.manager.busy
@@ -110,6 +119,12 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             _LOGGER.error("签发失败：%s", err)
             info = await self.hass.async_add_executor_job(self.manager.read_cert)
             info.last_error = str(err)
+            await self._async_notify(
+                "HA SSL · 证书签发/续期失败",
+                f"域名 {self.manager.domain} 签发失败：{err}\n"
+                "动态域名记录与凭据请先确认；证书到期前会继续重试。",
+                notification_id="ha_ssl_issue_failed",
+            )
             return info
 
         if restart_after:
@@ -127,6 +142,54 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
         info = await self.hass.async_add_executor_job(self.manager.read_cert)
         self.async_set_updated_data(info)
         return info
+
+    async def _async_alert_if_due(self, info: CertInfo) -> None:
+        """Warn once a day when the certificate gets close to expiry."""
+        options = self.entry.options
+        threshold = int(
+            options.get(CONF_EXPIRY_ALERT_DAYS, DEFAULT_EXPIRY_ALERT_DAYS)
+        )
+        if info.days_left is None or info.days_left > threshold:
+            return
+        today = date.today()
+        if self._last_alert_day == today:
+            return
+        self._last_alert_day = today
+        await self._async_notify(
+            "HA SSL · 证书即将到期",
+            f"域名 {self.manager.domain} 的证书还剩 {info.days_left} 天，"
+            f"到期于 {info.valid_to.isoformat() if info.valid_to else '未知'}。\n"
+            "若自动续期已开启，请检查最近一次签发日志。",
+            notification_id="ha_ssl_expiring",
+        )
+
+    async def _async_notify(
+        self, title: str, message: str, notification_id: str
+    ) -> None:
+        """Persistent notification plus an optional webhook."""
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {"title": title, "notification_id": notification_id, "message": message},
+            blocking=False,
+        )
+        self.hass.bus.async_fire(
+            "ha_ssl_cert_alert",
+            {"title": title, "message": message},
+        )
+        webhook = str(self.entry.options.get(CONF_NOTIFY_WEBHOOK) or "").strip()
+        if not webhook.startswith(("http://", "https://")):
+            return
+        try:
+            async with async_get_clientsession(self.hass).post(
+                webhook,
+                json={"title": title, "message": message, "domain": self.manager.domain},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status >= 400:
+                    _LOGGER.warning("告警 Webhook 返回 HTTP %s", resp.status)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("告警 Webhook 发送失败：%s", err)
 
     async def _async_restart_ha(self) -> None:
         """Restart Home Assistant so the new certificate is loaded."""

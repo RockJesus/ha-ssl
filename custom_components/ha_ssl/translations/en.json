@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Renewal and dynamic DNS",
-        "description": "Renewal happens 30 days before expiry and Home Assistant restarts once afterwards.\n\n**Dynamic DNS (optional)**: keeps the records of {domain} pointed at this host. Supports A (IPv4), AAAA (IPv6) and one optional CNAME alias. DNS only, it never touches the certificate.",
+        "description": "Renewals start 30 days before expiry and restart Home Assistant afterwards.\n\n**Certificate**: multiple names or a wildcard are supported; expiry and failures raise notifications and can post to a webhook.\n\n**DDNS**: one 'name | type | value' per line; A / AAAA / CNAME / TXT in any number, auto follows this host's public address.",
         "data": {
           "auto_renew": "Automatic renewal",
           "renew_days": "Renew this many days before expiry",
@@ -58,7 +58,15 @@
           "ddns_interval": "Check interval",
           "ddns_record_types": "Record types",
           "ddns_cname_record": "CNAME record name",
-          "ddns_cname_target": "CNAME target"
+          "ddns_cname_target": "CNAME target",
+          "cert_domains": "Certificate domains",
+          "expiry_alert_days": "Expiry alert threshold",
+          "notify_webhook": "Alert webhook",
+          "https_port": "HTTPS port",
+          "tls_profile": "TLS profile",
+          "ddns_records": "DNS record list",
+          "ddns_ttl": "Record TTL",
+          "ddns_notify": "Notify on change"
         },
         "data_description": {
           "auto_renew": "When off, renewal only happens via the issue button",
@@ -69,13 +77,24 @@
           "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default",
           "ddns_record_types": "Pick any of A (IPv4), AAAA (IPv6), CNAME (alias). AAAA needs a routable public IPv6 on this host",
           "ddns_cname_record": "Optional alias record, for example home. Leave empty to skip CNAME; must differ from the A/AAAA name",
-          "ddns_cname_target": "Hostname the CNAME points to (for example another DDNS name); required when CNAME is selected"
+          "ddns_cname_target": "Hostname the CNAME points to (for example another DDNS name); required when CNAME is selected",
+          "cert_domains": "Comma separated; wildcard *.example.com is supported via DNS-01. Empty keeps the main domain only",
+          "expiry_alert_days": "Notify once a day when fewer days remain than this value",
+          "notify_webhook": "Optional. POST JSON on issuance failure or imminent expiry (chat bot webhooks work)",
+          "https_port": "Port written next to the certificate; only applied when the HA HTTP store already has this key",
+          "tls_profile": "Modern allows TLS 1.3 only; Intermediate also accepts TLS 1.2 for older devices",
+          "ddns_records": "One per line: name | type | value. Types: A / AAAA / CNAME / TXT; use auto for the public address",
+          "ddns_ttl": "TTL in seconds for created or updated records; providers may raise it to their minimum",
+          "ddns_notify": "Send a persistent notification and fire ha_ssl_ddns_changed when a record changes"
         }
       }
     },
     "error": {
       "invalid_cname": "CNAME needs both a record name and a valid target hostname",
-      "cname_conflict": "The CNAME name cannot equal the A/AAAA name, DNS forbids CNAME next to other records"
+      "cname_conflict": "The CNAME name cannot equal the A/AAAA name, DNS forbids CNAME next to other records",
+      "invalid_records": "Fix the record list: one 'name | type | value' per line",
+      "invalid_webhook": "Webhook must start with http:// or https://",
+      "invalid_domains": "The certificate domain list contains an invalid name"
     }
   },
   "entity": {
@@ -91,6 +110,9 @@
       },
       "public_ipv6": {
         "name": "Public IPv6"
+      },
+      "ddns_records": {
+        "name": "Records maintained"
       }
     },
     "binary_sensor": {

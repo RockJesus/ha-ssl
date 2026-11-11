@@ -17,6 +17,7 @@ from typing import Any
 
 import aiohttp
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -31,6 +32,7 @@ from .const import (
     ACME_DIRECTORY_STAGING,
     CERT_FILE_NAME,
     CONF_CERT_DIR,
+    CONF_CERT_DOMAINS,
     CONF_DOMAIN,
     CONF_PROVIDER,
     CONF_STAGING,
@@ -63,6 +65,8 @@ class CertInfo:
     serial: str = ""
     valid_from: datetime | None = None
     valid_to: datetime | None = None
+    san: tuple[str, ...] = ()
+    chain_length: int = 0
     last_error: str | None = None
     last_issued_at: datetime | None = None
 
@@ -125,6 +129,28 @@ class CertManager:
     def domain(self) -> str:
         """Configured DNS name."""
         return str(self.entry.data[CONF_DOMAIN])
+
+    async def provider_lookup(self) -> tuple[str, str]:
+        """Find (zone, relative) for the primary domain through the provider API."""
+        provider = async_create_provider(
+            async_get_clientsession(self.hass),
+            str(self.entry.data.get(CONF_PROVIDER) or ""),
+            dict(self.entry.data),
+        )
+        return await provider.async_find_zone(self.domain)
+
+    @property
+    def domains(self) -> list[str]:
+        """Every DNS name this certificate must cover."""
+        raw = str(self.entry.options.get(CONF_CERT_DOMAINS) or "").strip()
+        if not raw:
+            return [self.domain]
+        names = [
+            item.strip().lower().rstrip(".")
+            for item in raw.replace("，", ",").split(",")
+            if item.strip()
+        ]
+        return names or [self.domain]
 
     @property
     def cert_dir(self) -> str:
@@ -193,6 +219,22 @@ class CertManager:
         info.serial = format(cert.serial_number, "x")
         info.valid_from = _parse_cert_time(cert, "not_valid_before")
         info.valid_to = _parse_cert_time(cert, "not_valid_after")
+        try:
+            info.san = tuple(
+                str(name)
+                for name in cert.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName
+                ).value.get_values_for_type(x509.DNSName)
+            )
+        except x509.ExtensionNotFound:
+            info.san = ()
+        info.chain_length = len(
+            [
+                block
+                for block in raw.split("-----BEGIN CERTIFICATE-----")
+                if block.strip()
+            ]
+        )
         info.last_error = self.last_error
         info.last_issued_at = self.last_issued_at
         return info
@@ -205,7 +247,7 @@ class CertManager:
             raise CertIssueError("已有一签发任务在运行，请稍后再试")
 
         async with self._lock:
-            domain = self.domain
+            domains = self.domains
             provider_key = str(self.entry.data.get(CONF_PROVIDER) or "")
             directory = (
                 ACME_DIRECTORY_STAGING
@@ -226,7 +268,6 @@ class CertManager:
 
             try:
                 await client.async_initialize()
-                zone, relative = await provider.async_find_zone(domain)
             except (AcmeError, DnsProviderError) as err:
                 self.last_error = str(err)
                 raise CertIssueError(str(err)) from err
@@ -235,18 +276,22 @@ class CertManager:
                 self.last_error = f"{type(err).__name__}: {err}"
                 raise CertIssueError(self.last_error) from err
 
-            rr = "_acme-challenge"
-            if relative:
-                rr = f"{rr}.{relative}"
-            fqdn = f"{rr}.{zone}"
-
             handles: list[str] = []
+            challenges: dict[str, tuple[str, str]] = {}
 
-            async def prepare_txt(value: str) -> None:
-                """Create the challenge record and wait for it to go live."""
+            async def prepare_txt(identifier: str, value: str) -> None:
+                """Create the challenge record for one name and wait for it."""
+                base = identifier.lower().lstrip("*.").rstrip(".")
+                if base not in challenges:
+                    zone, relative = await provider.async_find_zone(base)
+                    rr = "_acme-challenge"
+                    if relative:
+                        rr = f"{rr}.{relative}"
+                    challenges[base] = (zone, rr)
+                zone, rr = challenges[base]
                 await provider.async_clean_stale(zone, rr)
                 handles.append(await provider.async_add_txt(zone, rr, value))
-                await self._async_wait_txt(fqdn, value)
+                await self._async_wait_txt(f"{rr}.{zone}", value)
 
             async def cleanup_txt() -> None:
                 """Remove every challenge record this run created."""
@@ -259,7 +304,7 @@ class CertManager:
 
             try:
                 cert_pem, key_pem = await client.async_issue(
-                    domain, prepare_txt, cleanup_txt, DEFAULT_WAIT_TIMEOUT
+                    domains, prepare_txt, cleanup_txt, DEFAULT_WAIT_TIMEOUT
                 )
             except (
                 AcmeError,
@@ -280,7 +325,9 @@ class CertManager:
             )
             self.last_error = None
             self.last_issued_at = datetime.now(timezone.utc)
-            _LOGGER.info("证书签发成功：%s（写入 %s）", domain, self.cert_dir)
+            _LOGGER.info(
+                "证书签发成功：%s（写入 %s）", "、".join(domains), self.cert_dir
+            )
             return await self.hass.async_add_executor_job(self.read_cert)
 
     def _ensure_dirs(self) -> None:
@@ -570,7 +617,11 @@ async def async_maybe_enable_https(
 
 
 async def async_apply_https_config(
-    hass: HomeAssistant, fullchain: str, key: str
+    hass: HomeAssistant,
+    fullchain: str,
+    key: str,
+    port: int | None = None,
+    tls_profile: str | None = None,
 ) -> dict[str, Any]:
     """Write the certificate into whatever HTTP config this HA version uses.
 
@@ -614,13 +665,36 @@ async def async_apply_https_config(
     config = dict(store.stable)
     config["ssl_certificate"] = fullchain
     config["ssl_key"] = key
+    applied: list[str] = []
+    ignored: list[str] = []
+    for key_name, value in (
+        ("server_port", port),
+        ("ssl_profile", tls_profile),
+    ):
+        if value in (None, ""):
+            continue
+        # 只改当前存储里真实存在的键，避免写入未知键导致 HTTP 集成启动失败。
+        if key_name in config:
+            config[key_name] = value
+            applied.append(f"{key_name}={value}")
+        else:
+            ignored.append(key_name)
     await store.async_set_pending(config)
     cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
+    message = (
+        "已写入 HA 的 HTTP 配置存储（重启后生效；重启后请在 5 分钟内确认可访问并固化，否则会自动回退）"
+    )
+    if applied:
+        message += "；同时调整 " + "、".join(applied)
+    if ignored:
+        message += "；当前存储未暴露 " + "、".join(ignored) + "，未改动"
     return {
         "mode": "storage",
-        "message": "已写入 HA 的 HTTP 配置存储（重启后生效；重启后请在 5 分钟内确认可访问并固化，否则会自动回退）",
+        "message": message,
         "needs_restart": True,
         "yaml_cleanup": cleanup,
+        "applied": applied,
+        "ignored": ignored,
     }
 
 
@@ -673,3 +747,126 @@ def apply_http_config(fullchain: str, key: str, config_file: str = CONFIG_FILE) 
 
     path.write_text(text, encoding="utf-8")
     return status
+
+
+def _load_chain(fullchain: str) -> list[x509.Certificate]:
+    """Parse every certificate in a PEM chain."""
+    text = pathlib.Path(fullchain).read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----", text, flags=re.S
+    )
+    return [x509.load_pem_x509_certificate(block.encode()) for block in blocks]
+
+
+def verify_installation(fullchain: str, key: str) -> dict[str, Any]:
+    """Check the on-disk pair: key match, chain completeness and expiry."""
+    result: dict[str, Any] = {
+        "exists": pathlib.Path(fullchain).exists() and pathlib.Path(key).exists(),
+        "key_match": False,
+        "expired": None,
+        "days_left": None,
+        "chain_length": 0,
+        "chain_ok": False,
+        "san": [],
+        "problems": [],
+    }
+    if not result["exists"]:
+        result["problems"].append("证书或私钥文件不存在")
+        return result
+
+    try:
+        chain = _load_chain(fullchain)
+    except (OSError, ValueError) as err:
+        result["problems"].append(f"证书无法解析：{err}")
+        return result
+    result["chain_length"] = len(chain)
+    leaf = chain[0]
+    try:
+        result["san"] = [
+            str(name)
+            for name in leaf.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value.get_values_for_type(x509.DNSName)
+        ]
+    except x509.ExtensionNotFound:
+        result["san"] = []
+
+    result["days_left"] = (
+        leaf.not_valid_after_utc - datetime.now(timezone.utc)
+    ).days
+    result["expired"] = result["days_left"] < 0
+
+    try:
+        key_obj = serialization.load_pem_private_key(
+            pathlib.Path(key).read_bytes(), password=None
+        )
+    except (OSError, ValueError, TypeError) as err:
+        result["problems"].append(f"私钥无法解析：{err}")
+        key_obj = None
+    if key_obj is not None:
+        result["key_match"] = (
+            key_obj.public_key().public_numbers()
+            == leaf.public_key().public_numbers()
+        )
+        if not result["key_match"]:
+            result["problems"].append("私钥与证书不匹配")
+
+    chain_ok = True
+    for current, issuer in zip(chain, chain[1:], strict=False):
+        if current.issuer != issuer.subject:
+            chain_ok = False
+            result["problems"].append("证书链顺序或内容不完整")
+            break
+    result["chain_ok"] = chain_ok and len(chain) >= 2
+    if not result["chain_ok"] and chain_ok:
+        result["problems"].append("证书链只有叶子证书，缺少中间证书")
+
+    if result["expired"]:
+        result["problems"].append("证书已过期")
+    return result
+
+
+def backup_certificate(
+    fullchain: str, key: str, target_dir: str, stamp: str
+) -> str:
+    """Write a zip backup of the certificate pair and return its path."""
+    import zipfile  # noqa: PLC0415
+
+    from .const import BACKUP_FILE_PREFIX  # noqa: PLC0415
+
+    pathlib.Path(target_dir).mkdir(parents=True, exist_ok=True)
+    archive = os.path.join(target_dir, f"{BACKUP_FILE_PREFIX}_{stamp}.zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(fullchain, "fullchain.pem")
+        bundle.write(key, "privkey.pem")
+    return archive
+
+
+def restore_certificate(
+    archive: str, fullchain: str, key: str
+) -> dict[str, Any]:
+    """Restore a certificate pair from a backup zip after validating it."""
+    import zipfile  # noqa: PLC0415
+
+    if not os.path.exists(archive):
+        raise ValueError(f"备份文件不存在：{archive}")
+    with zipfile.ZipFile(archive) as bundle:
+        names = bundle.namelist()
+        if "fullchain.pem" not in names or "privkey.pem" not in names:
+            raise ValueError("备份包里缺少 fullchain.pem 或 privkey.pem")
+        cert_pem = bundle.read("fullchain.pem")
+        key_pem = bundle.read("privkey.pem")
+
+    tmp_dir = os.path.join(os.path.dirname(fullchain), ".restore")
+    pathlib.Path(tmp_dir).mkdir(parents=True, exist_ok=True)
+    tmp_cert = os.path.join(tmp_dir, "fullchain.pem")
+    tmp_key = os.path.join(tmp_dir, "privkey.pem")
+    pathlib.Path(tmp_cert).write_bytes(cert_pem)
+    pathlib.Path(tmp_key).write_bytes(key_pem)
+    _validate_cert_pair(tmp_cert, tmp_key)
+
+    pathlib.Path(fullchain).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(fullchain).write_bytes(cert_pem)
+    pathlib.Path(key).write_bytes(key_pem)
+    info = verify_installation(fullchain, key)
+    return {"path": fullchain, "verify": info}

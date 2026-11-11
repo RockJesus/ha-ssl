@@ -47,28 +47,47 @@
 
 家宽公网 IP 会变时，打开它就够了，不必再装 Lucky 之类的 DDNS 工具：
 
-设置 → 设备与服务 → HA SSL → **选项** → 打开「启用动态域名解析」。默认每 5 分钟查一次公网地址，和记录比对，变了才改；记录不存在时自动创建。
+设置 → 设备与服务 → HA SSL → **选项** → 打开「启用动态域名解析」，在**记录清单**里每行写一条 `名称 | 类型 | 值`。默认每 5 分钟查一次公网地址，和记录比对，变了才改；记录不存在时自动创建。
 
-| 选项 | 说明 |
+```text
+dyc.example.com  | A     | auto
+dyc.example.com  | AAAA  | auto
+home.example.com | CNAME | other.example.com
+example.com      | TXT   | v=spf1 -all
+```
+
+| 字段 | 说明 |
 |---|---|
-| 要更新的域名 | A/AAAA 用的记录名。留空 = 证书域名；填别的子域名也可以 |
-| 要维护的记录类型 | 多选：`A`（IPv4）、`AAAA`（IPv6）、`CNAME`（别名） |
-| CNAME 记录名 / CNAME 指向 | 勾了 CNAME 才需要：别名记录名（如 `home`）+ 目标主机名；不能与 A/AAAA 同名 |
-| 检查间隔 | 1–1440 分钟，默认 5 |
+| 名称 | 完整域名；也可以写短标签（如 `home`），会自动挂到主记录所在 zone |
+| 类型 | `A`、`AAAA`、`CNAME`、`TXT`，可任意条数、不同类型混用 |
+| 值 | `A`/`AAAA` 填 `auto` 表示跟随本机公网地址，也可填固定地址；`CNAME` 填目标主机名；`TXT` 填内容 |
 
-- 走的是同一套服务商凭据，不额外配置；阿里云、DNSPod、Cloudflare 都支持这三类记录。
+- 走的是同一套服务商凭据，不额外配置；阿里云、DNSPod、Cloudflare 都支持这四类记录。
 - **A**：查公网 IPv4 并写 A 记录；检测到运营商级 NAT（`100.64/10`）会直接报错，因为那种情况改 DNS 也没用。
-- **AAAA**：查公网 IPv6（自动剔除回环、链路本地、ULA 等不可路由地址），本机没有公网 IPv6 时只报该项失败，不影响 A 记录继续维护。
-- **CNAME**：把一条别名记录指向你指定的主机名（常用于 `home.example.com → 已有 DDNS 域名`），按目标变化同步；DNS 不允许同名 CNAME 与 A/AAAA 并存，选项里会拦。
-- 每类记录独立对账，任一类失败不会拖垮其他类；失败原因汇总在 `last_error`。
-- 实体「公网 IP」「公网 IPv6」显示最新检测结果，属性里有各类记录的当前值、上一次值、zone、上次变更时间与失败原因。
-- 想立刻验证：调用服务 `ha_ssl.update_ddns`，返回 IPv4/IPv6、CNAME 目标与逐类型结果（updated / unchanged / failed）。
+- **AAAA**：查公网 IPv6（自动剔除回环、链路本地、ULA 等不可路由地址）；本机没有 IPv6 出网时只报该项失败，不影响 A 记录。
+- **CNAME**：别名指向你指定的主机名；DNS 不允许同名 CNAME 与 A/AAAA 并存，清单里会拦下并提示。
+- 每类、每条记录独立对账，任一条失败不会拖垮其他条；失败原因汇总在 `last_error`。
+- TTL 可调（默认 600 秒）；地址变化或更新失败会发持久通知，同时触发 `ha_ssl_ddns_changed` 事件，可接自动化。
+- 实体「公网 IP」「公网 IPv6」「维护的记录数」显示当前状态；属性里有逐条记录结果、双栈检测、最近 5 次变更。
+- 想立刻验证：调用 `ha_ssl.update_ddns`，返回逐条结果、双栈状态与变更历史。
+
+## 证书增强
+
+| 选项 / 服务 | 说明 |
+|---|---|
+| 证书域名清单 | 逗号分隔多个域名，支持 `*.example.com` 泛域名（DNS-01 可签），一张证书覆盖全部 |
+| 到期提醒阈值 | 剩余天数低于该值时发持久通知，每天最多一次；可配 Webhook 同步推到企业微信/飞书 |
+| HTTPS 端口 / TLS 档位 | 写 HTTPS 配置时一并带入；只在 HA 的 HTTP 配置存储里已有对应键时才生效 |
+| `ha_ssl.diagnose` | 一次性体检：IPv4/IPv6 出网、公网地址、zone 定位、证书链与私钥匹配 |
+| `ha_ssl.verify_cert` | 校验磁盘上的证书：私钥是否匹配、链是否完整、SAN 覆盖哪些域名、剩余天数 |
+| `ha_ssl.backup_cert` | 把证书与私钥打包成 zip，换机/重装时直接恢复，省一次签发 |
+| `ha_ssl.restore_cert` | 从 zip 恢复证书对，先校验匹配再覆盖 |
 
 ## 实体与服务
 
 | 类型 | 实体 |
 |---|---|
-| 传感器 | 证书到期时间、剩余天数、公网 IP、公网 IPv6 |
+| 传感器 | 证书到期时间、剩余天数、公网 IP、公网 IPv6、维护的记录数 |
 | 二进制传感器 | 证书异常 |
 | 按钮 | 立即签发 |
 | 开关 | 自动续期 |
@@ -76,14 +95,17 @@
 | 服务 | 用途 |
 |---|---|
 | `ha_ssl.renew` | 立刻签发/续期一次 |
-| `ha_ssl.update_ddns` | 立刻比对公网地址并改写 A / AAAA / CNAME 记录 |
+| `ha_ssl.update_ddns` | 立刻比对公网地址并按记录清单改写 A / AAAA / CNAME / TXT |
 | `ha_ssl.configure_https` | 写入 HTTPS 配置并重启，`restart: false` 只写不重启 |
 | `ha_ssl.promote_https` | 固化待生效的 HTTPS 配置，取消自动回退 |
 | `ha_ssl.probe` | 诊断：候选 ACME 目录连通性、本机 http/https 自检、HTTP 配置存储 |
+| `ha_ssl.diagnose` | 网络与证书一体化诊断 |
+| `ha_ssl.verify_cert` | 证书链/私钥/到期自检 |
+| `ha_ssl.backup_cert` / `ha_ssl.restore_cert` | 证书备份与恢复 |
 
 ## 注意
 
-- 证书只覆盖配置的那一个域名，不支持泛域名。
+- 一张证书可覆盖多个域名或泛域名，但所有域名都必须由同一个 DNS 服务商托管（签发时只用一个凭据）。
 - 8123 上 TLS 后明文 `http://` 立刻失效。家里 Wi-Fi 用域名访问需要路由器支持 NAT 回环；不支持就在内网用 `https://<IP>:8123` 并单独处理信任。
 - 证书目录默认 `/config/ssl`，**不是** `/ssl`——后者是加载项的挂载路径，HA 本体里没有。
 - 选项里可调提前续期天数（7–89），也可关掉自动续期或关掉「续期后重启」。关掉重启后，新证书要等下次手动重启才生效。
@@ -115,6 +137,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <details open>
 <summary>v1.2.x</summary>
 
+- **v1.2.6**：动态域名改为「记录清单」，可同时维护任意条 A / AAAA / CNAME / TXT（含固定值、TTL、变更历史、变更通知与 `ha_ssl_ddns_changed` 事件）；证书支持多域名与泛域名、到期/失败告警与 Webhook、HTTPS 端口与 TLS 档位、`diagnose` / `verify_cert` / `backup_cert` / `restore_cert` 四个服务；新增「维护的记录数」传感器
 - **v1.2.5**：`update_ddns` 的结果判定改为「至少一类记录成功即算 unchanged/updated」，避免只有 AAAA 因无 IPv6 失败时整体显示 failed
 - **v1.2.4**：补回 manifest 的 `dependencies: ["http"]`（换版本号时漏了，Hassfest 报 DEPENDENCIES）；功能同 v1.2.3
 - **v1.2.3**：DDNS 扩到全部记录类型——新增 AAAA（IPv6）与可选 CNAME 别名，逐类型独立对账；新增「公网 IPv6」传感器

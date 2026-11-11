@@ -33,6 +33,16 @@ CONF_DDNS_INTERVAL = "ddns_interval"
 CONF_DDNS_RECORD_TYPES = "ddns_record_types"
 CONF_DDNS_CNAME_RECORD = "ddns_cname_record"
 CONF_DDNS_CNAME_TARGET = "ddns_cname_target"
+CONF_DDNS_RECORDS = "ddns_records"
+CONF_DDNS_TTL = "ddns_ttl"
+CONF_DDNS_NOTIFY = "ddns_notify"
+
+# 证书
+CONF_CERT_DOMAINS = "cert_domains"
+CONF_EXPIRY_ALERT_DAYS = "expiry_alert_days"
+CONF_NOTIFY_WEBHOOK = "notify_webhook"
+CONF_HTTPS_PORT = "https_port"
+CONF_TLS_PROFILE = "tls_profile"
 
 # 服务商凭据
 CONF_ALIYUN_ACCESS_KEY_ID = "aliyun_access_key_id"
@@ -62,9 +72,20 @@ DEFAULT_DDNS_ENABLED = False
 DEFAULT_DDNS_INTERVAL = 5
 DDNS_MIN_INTERVAL = 1
 DDNS_MAX_INTERVAL = 1440
-DDNS_RECORD_TYPES = ("A", "AAAA", "CNAME")
+DDNS_RECORD_TYPES = ("A", "AAAA", "CNAME", "TXT")
 DEFAULT_DDNS_RECORD_TYPES = ["A"]
 DDNS_TTL = 600
+DDNS_MIN_TTL = 60
+DDNS_MAX_TTL = 86400
+DEFAULT_DDNS_TTL = 600
+DEFAULT_DDNS_NOTIFY = True
+DEFAULT_EXPIRY_ALERT_DAYS = 7
+DEFAULT_HTTPS_PORT = 8123
+TLS_PROFILES = ("modern", "intermediate")
+DEFAULT_TLS_PROFILE = "intermediate"
+DDNS_HISTORY_LIMIT = 50
+EVENT_DDNS_CHANGED = "ha_ssl_ddns_changed"
+EVENT_CERT_ALERT = "ha_ssl_cert_alert"
 PUBLIC_IP_TIMEOUT = 10
 PUBLIC_IP_ENDPOINTS = (
     "https://api.ipify.org",
@@ -113,7 +134,12 @@ SERVICE_CONFIGURE_HTTPS = "configure_https"
 SERVICE_PROBE = "probe"
 SERVICE_PROMOTE_HTTPS = "promote_https"
 SERVICE_UPDATE_DDNS = "update_ddns"
+SERVICE_DIAGNOSE = "diagnose"
+SERVICE_VERIFY_CERT = "verify_cert"
+SERVICE_BACKUP_CERT = "backup_cert"
+SERVICE_RESTORE_CERT = "restore_cert"
 ATTR_RESTART = "restart"
 
 # 平台
 PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
+BACKUP_FILE_PREFIX = "ha_ssl_backup"

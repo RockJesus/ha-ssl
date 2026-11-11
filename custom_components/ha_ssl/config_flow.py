@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .ddns import is_hostname, normalize_record_types
+from .ddns import is_hostname, normalize_record_types, normalize_ttl, parse_record_lines
 from .const import (
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
@@ -21,6 +21,14 @@ from .const import (
     CONF_ALIYUN_ACCESS_KEY_SECRET,
     CONF_AUTO_RENEW,
     CONF_CERT_DIR,
+    CONF_CERT_DOMAINS,
+    CONF_DDNS_NOTIFY,
+    CONF_DDNS_RECORDS,
+    CONF_DDNS_TTL,
+    CONF_EXPIRY_ALERT_DAYS,
+    CONF_HTTPS_PORT,
+    CONF_NOTIFY_WEBHOOK,
+    CONF_TLS_PROFILE,
     CONF_CLOUDFLARE_API_TOKEN,
     CONF_DDNS_CNAME_RECORD,
     CONF_DDNS_CNAME_TARGET,
@@ -40,7 +48,13 @@ from .const import (
     DEFAULT_DDNS_ENABLED,
     DEFAULT_DDNS_INTERVAL,
     DEFAULT_DDNS_RECORD_TYPES,
+    DEFAULT_DDNS_NOTIFY,
+    DEFAULT_EXPIRY_ALERT_DAYS,
+    DEFAULT_HTTPS_PORT,
     DEFAULT_RENEW_DAYS,
+    DEFAULT_TLS_PROFILE,
+    DDNS_MAX_TTL,
+    DDNS_MIN_TTL,
     DEFAULT_RESTART_AFTER_RENEW,
     DDNS_MAX_INTERVAL,
     DDNS_MIN_INTERVAL,
@@ -246,6 +260,26 @@ class HaSslOptionsFlow(OptionsFlow):
                     "A" in types or "AAAA" in types
                 ):
                     errors["base"] = "cname_conflict"
+
+            raw_records = str(user_input.get(CONF_DDNS_RECORDS) or "")
+            if raw_records.strip():
+                specs, record_errors = parse_record_lines(raw_records)
+                if record_errors:
+                    errors["base"] = "invalid_records"
+                    _LOGGER.warning("动态域名记录清单有问题：%s", record_errors)
+                elif not specs:
+                    errors["base"] = "invalid_records"
+            webhook = str(user_input.get(CONF_NOTIFY_WEBHOOK) or "").strip()
+            if webhook and not webhook.startswith(("http://", "https://")):
+                errors["base"] = "invalid_webhook"
+            cert_domains = str(user_input.get(CONF_CERT_DOMAINS) or "").strip()
+            for raw in [item.strip() for item in cert_domains.replace("，", ",").split(",") if item.strip()]:
+                clean = raw.lower().rstrip(".")
+                if clean.startswith("*."):
+                    clean = clean[2:]
+                if not is_hostname(clean):
+                    errors["base"] = "invalid_domains"
+                    break
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
 
@@ -278,6 +312,65 @@ class HaSslOptionsFlow(OptionsFlow):
                         ),
                     ): bool,
                     vol.Optional(
+                        CONF_CERT_DOMAINS,
+                        default=str(
+                            options.get(CONF_CERT_DOMAINS)
+                            or self.config_entry.data.get(CONF_DOMAIN, "")
+                        ),
+                    ): str,
+                    vol.Optional(
+                        CONF_EXPIRY_ALERT_DAYS,
+                        default=int(
+                            options.get(
+                                CONF_EXPIRY_ALERT_DAYS, DEFAULT_EXPIRY_ALERT_DAYS
+                            )
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=89,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                            unit_of_measurement="天",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_NOTIFY_WEBHOOK,
+                        default=str(options.get(CONF_NOTIFY_WEBHOOK) or ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_HTTPS_PORT,
+                        default=int(
+                            options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT)
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1024,
+                            max=65535,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TLS_PROFILE,
+                        default=str(
+                            options.get(CONF_TLS_PROFILE, DEFAULT_TLS_PROFILE)
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                selector.SelectOptionDict(
+                                    value="modern", label="Modern（仅 TLS 1.3）"
+                                ),
+                                selector.SelectOptionDict(
+                                    value="intermediate",
+                                    label="Intermediate（兼容 TLS 1.2）",
+                                ),
+                            ],
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
                         CONF_DDNS_ENABLED,
                         default=options.get(CONF_DDNS_ENABLED, DEFAULT_DDNS_ENABLED),
                     ): bool,
@@ -285,6 +378,33 @@ class HaSslOptionsFlow(OptionsFlow):
                         CONF_DDNS_RECORD,
                         default=str(options.get(CONF_DDNS_RECORD) or ""),
                     ): str,
+                    vol.Optional(
+                        CONF_DDNS_RECORDS,
+                        default=str(options.get(CONF_DDNS_RECORDS) or ""),
+                    ): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            multiline=True,
+                            type=selector.TextSelectorType.TEXT,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_DDNS_TTL,
+                        default=normalize_ttl(options.get(CONF_DDNS_TTL)),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=DDNS_MIN_TTL,
+                            max=DDNS_MAX_TTL,
+                            step=60,
+                            mode=selector.NumberSelectorMode.BOX,
+                            unit_of_measurement="秒",
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_DDNS_NOTIFY,
+                        default=bool(
+                            options.get(CONF_DDNS_NOTIFY, DEFAULT_DDNS_NOTIFY)
+                        ),
+                    ): bool,
                     vol.Optional(
                         CONF_DDNS_RECORD_TYPES,
                         default=normalize_record_types(

@@ -50,6 +50,7 @@ async def async_setup_entry(
     if ddns is not None:
         entities.append(PublicIpSensor(coordinator, ddns))
         entities.append(PublicIpv6Sensor(coordinator, ddns))
+        entities.append(DdnsRecordCountSensor(coordinator, ddns))
     async_add_entities(entities)
 
 
@@ -152,17 +153,23 @@ class _DdnsBaseSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
-        """Expose the record, where it lives and the last error."""
+        """Expose every configured record plus the last error."""
         state = self.ddns_state
         if state is None:
             return {}
         return {
             "record": state.record,
             "record_types": list(self.ddns.record_types),
+            "records_configured": len(self.ddns.specs),
+            "ttl": self.ddns.ttl,
             "record_value": state.record_value,
             "zone": state.zone,
             "source": state.source,
             "source_v6": state.source_v6,
+            "dual_stack": {
+                "ipv4": state.ipv4_ok,
+                "ipv6": state.ipv6_ok,
+            },
             "changed": state.changed,
             "checked_at": state.checked_at.isoformat()
             if state.checked_at
@@ -171,22 +178,42 @@ class _DdnsBaseSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
             if state.last_change_at
             else None,
             "last_error": state.last_error,
-            "cname_record": self.ddns.cname_record or None,
-            "cname_target": self.ddns.cname_target or None,
             "records": {
-                rtype: {
+                key: {
+                    "type": item.rtype,
                     "name": item.name,
                     "value": item.value,
                     "previous": item.previous,
                     "changed": item.changed,
                     "error": item.error,
                 }
-                for rtype, item in state.results.items()
+                for key, item in state.results.items()
             },
+            "history": state.history[-5:],
             "update_interval_minutes": self.ddns.update_interval.total_seconds() // 60
             if self.ddns.update_interval
             else None,
         }
+
+
+class DdnsRecordCountSensor(_DdnsBaseSensor):
+    """How many DNS records the integration is maintaining."""
+
+    _attr_translation_key = "ddns_records"
+    _attr_icon = "mdi:dns"
+    _attr_native_unit_of_measurement = "条"
+
+    def __init__(
+        self, coordinator: AcmeCertCoordinator, ddns: DdnsCoordinator
+    ) -> None:
+        """Initialize the record count sensor."""
+        super().__init__(coordinator, ddns)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_ddns_records"
+
+    @property
+    def native_value(self) -> int:
+        """Number of configured records."""
+        return len(self.ddns.specs)
 
 
 class PublicIpSensor(_DdnsBaseSensor):

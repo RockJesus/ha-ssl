@@ -77,13 +77,16 @@ def generate_certificate_key() -> tuple[EllipticCurvePrivateKey, bytes]:
     return key, pem
 
 
-def build_csr_der(domain: str, key: EllipticCurvePrivateKey) -> bytes:
-    """Build a DER encoded CSR for a single DNS name."""
+def build_csr_der(domains: str | list[str], key: EllipticCurvePrivateKey) -> bytes:
+    """Build a DER encoded CSR covering one or more DNS names (SAN)."""
+    names = [domains] if isinstance(domains, str) else list(domains)
+    # 通配符不能当 Common Name，挑第一个普通域名顶上。
+    common = next((name for name in names if not name.startswith("*.")), names[0])
     csr = (
         x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common)]))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(domain)]),
+            x509.SubjectAlternativeName([x509.DNSName(name) for name in names]),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -302,62 +305,73 @@ class AcmeClient:
 
     async def async_issue(
         self,
-        domain: str,
+        domains: str | list[str],
         prepare_txt,
         cleanup_txt,
         wait_timeout: int = 300,
     ) -> tuple[str, bytes]:
-        """Run a dns-01 order and return (certificate chain PEM, private key PEM)."""
+        """Run a dns-01 order for one or more names; return (chain, key)."""
+        names = [domains] if isinstance(domains, str) else list(domains)
         order, headers = await self._async_post(
             self._directory["newOrder"],
-            {"identifiers": [{"type": "dns", "value": domain}]},
+            {"identifiers": [{"type": "dns", "value": name} for name in names]},
         )
         order_url = headers.get("Location") or order.get("url") or ""
         if not order_url:
             raise AcmeError("ACME 订单创建失败：响应缺少 Location")
-        authz_url = order["authorizations"][0]
 
-        authz, _ = await self._async_post(authz_url)
-        challenge = next(
-            (
-                item
-                for item in authz.get("challenges", [])
-                if item.get("type") == "dns-01"
-            ),
-            None,
-        )
-        if challenge is None:
-            raise AcmeError("ACME 服务器未提供 dns-01 验证方式")
-
-        token = challenge["token"]
-        key_auth = f"{token}.{self.thumbprint}"
-        txt_value = b64url(hashlib.sha256(key_auth.encode()).digest())
+        authz_urls = order.get("authorizations") or []
+        if not authz_urls:
+            raise AcmeError("ACME 订单没有返回任何授权地址")
 
         try:
-            await prepare_txt(txt_value)
-            await self._async_post(challenge["url"], {})
-            authz = await self._async_poll(
-                authz_url,
-                ("valid",),
-                ("invalid", "deactivated", "expired", "revoked"),
-                wait_timeout,
-            )
+            for authz_url in authz_urls:
+                authz, _ = await self._async_post(authz_url)
+                identifier = str(
+                    (authz.get("identifier") or {}).get("value") or names[0]
+                )
+                challenge = next(
+                    (
+                        item
+                        for item in authz.get("challenges", [])
+                        if item.get("type") == "dns-01"
+                    ),
+                    None,
+                )
+                if challenge is None:
+                    raise AcmeError(f"{identifier} 未提供 dns-01 验证方式")
+
+                token = challenge["token"]
+                key_auth = f"{token}.{self.thumbprint}"
+                txt_value = b64url(hashlib.sha256(key_auth.encode()).digest())
+
+                await prepare_txt(identifier, txt_value)
+                await self._async_post(challenge["url"], {})
+                authz = await self._async_poll(
+                    authz_url,
+                    ("valid",),
+                    ("invalid", "deactivated", "expired", "revoked"),
+                    wait_timeout,
+                )
+                if authz.get("status") != "valid":
+                    details: list[str] = []
+                    for item in authz.get("challenges") or []:
+                        error = item.get("error") or {}
+                        if error.get("detail"):
+                            details.append(str(error["detail"]))
+                    raise AcmeError(
+                        f"{identifier} 域名验证未通过"
+                        + (f"：{'；'.join(details)}" if details else ""),
+                        {
+                            "status": authz.get("status"),
+                            "challenges": authz.get("challenges"),
+                        },
+                    )
         finally:
             await cleanup_txt()
 
-        if authz.get("status") != "valid":
-            details: list[str] = []
-            for item in authz.get("challenges") or []:
-                error = item.get("error") or {}
-                if error.get("detail"):
-                    details.append(str(error["detail"]))
-            raise AcmeError(
-                "域名验证未通过" + (f"：{'；'.join(details)}" if details else ""),
-                {"status": authz.get("status"), "challenges": authz.get("challenges")},
-            )
-
         key, key_pem = generate_certificate_key()
-        csr_der = build_csr_der(domain, key)
+        csr_der = build_csr_der(names, key)
 
         for attempt in range(5):
             try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 
 import voluptuous as vol
 
@@ -27,21 +28,30 @@ from .cert_manager import (
     async_maybe_promote_https,
     async_promote_https,
     async_sync_external_url,
+    backup_certificate,
+    restore_certificate,
+    verify_installation,
 )
 from .const import (
     CONF_DDNS_ENABLED,
+    CONF_HTTPS_PORT,
     CONF_RESTART,
+    CONF_TLS_PROFILE,
     DEFAULT_DDNS_ENABLED,
     DOMAIN,
     PLATFORMS,
+    SERVICE_BACKUP_CERT,
     SERVICE_CONFIGURE_HTTPS,
+    SERVICE_DIAGNOSE,
     SERVICE_PROMOTE_HTTPS,
     SERVICE_PROBE,
     SERVICE_RENEW,
+    SERVICE_RESTORE_CERT,
     SERVICE_UPDATE_DDNS,
+    SERVICE_VERIFY_CERT,
 )
 from .coordinator import AcmeCertCoordinator
-from .ddns import DdnsCoordinator
+from .ddns import DdnsCoordinator, async_get_public_ip
 from .probe import (
     async_probe_cas,
     async_probe_self,
@@ -229,7 +239,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
         manager = coordinator.manager
         result = await async_apply_https_config(
-            hass, manager.fullchain_path, manager.key_path
+            hass,
+            manager.fullchain_path,
+            manager.key_path,
+            port=coordinator.entry.options.get(CONF_HTTPS_PORT),
+            tls_profile=coordinator.entry.options.get(CONF_TLS_PROFILE),
         )
         message = str(result["message"])
         if result.get("yaml_cleanup"):
@@ -277,38 +291,116 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("手动更新 DDNS：%s", message)
         return {"message": message, **result}
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_RENEW,
-        _async_handle_renew,
-        schema=vol.Schema({}),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_UPDATE_DDNS,
-        _async_handle_update_ddns,
-        schema=vol.Schema({}),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
+    def _register(name, handler, schema, response=SupportsResponse.OPTIONAL) -> None:
+        """Register one service, skipping it if it already exists."""
+        if hass.services.has_service(DOMAIN, name):
+            return
+        hass.services.async_register(
+            DOMAIN,
+            name,
+            handler,
+            schema=schema,
+            supports_response=response,
+        )
+
+    async def _async_handle_diagnose(call: ServiceCall) -> ServiceResponse:
+        """Report what this host can reach and what the certificate looks like."""
+        from homeassistant.helpers.aiohttp_client import (  # noqa: PLC0415
+            async_get_clientsession,
+        )
+
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        session = async_get_clientsession(hass)
+        probe: dict[str, object] = {}
+        for family in (4, 6):
+            try:
+                address, source = await async_get_public_ip(session, family)
+                probe[f"ipv{family}"] = {"ok": True, "address": address, "source": source}
+            except Exception as err:  # noqa: BLE001 - report the reason
+                probe[f"ipv{family}"] = {"ok": False, "error": str(err)}
+
+        manager = coordinator.manager
+        verify = await hass.async_add_executor_job(
+            verify_installation, manager.fullchain_path, manager.key_path
+        )
+        try:
+            zone, relative = await coordinator.manager.provider_lookup()
+        except Exception as err:  # noqa: BLE001 - report the reason
+            zone_info: dict[str, object] = {"ok": False, "error": str(err)}
+        else:
+            zone_info = {"ok": True, "zone": zone, "relative": relative}
+        return {
+            "network": probe,
+            "certificate": verify,
+            "domains": manager.domains,
+            "zone": zone_info,
+        }
+
+    async def _async_handle_verify_cert(call: ServiceCall) -> ServiceResponse:
+        """Verify the pair on disk: key match, chain and expiry."""
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        manager = coordinator.manager
+        result = await hass.async_add_executor_job(
+            verify_installation, manager.fullchain_path, manager.key_path
+        )
+        return {"message": "证书自检完成", "path": manager.fullchain_path, **result}
+
+    async def _async_handle_backup_cert(call: ServiceCall) -> ServiceResponse:
+        """Zip the certificate pair somewhere the user can download."""
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        manager = coordinator.manager
+        target = str(call.data.get("path") or hass.config.path("ha_ssl_backups"))
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        archive = await hass.async_add_executor_job(
+            backup_certificate, manager.fullchain_path, manager.key_path, target, stamp
+        )
+        return {"message": "已备份证书", "archive": archive}
+
+    async def _async_handle_restore_cert(call: ServiceCall) -> ServiceResponse:
+        """Restore a pair from a zip backup after validating it."""
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        manager = coordinator.manager
+        archive = str(call.data["path"])
+        result = await hass.async_add_executor_job(
+            restore_certificate, archive, manager.fullchain_path, manager.key_path
+        )
+        await coordinator.async_refresh_cert()
+        return {
+            "message": "已恢复证书，重启 Home Assistant 后生效",
+            "archive": archive,
+        } | result
+
+    _register(SERVICE_RENEW, _async_handle_renew, vol.Schema({}))
+    _register(SERVICE_UPDATE_DDNS, _async_handle_update_ddns, vol.Schema({}))
+    _register(
         SERVICE_PROBE,
         _async_handle_probe,
-        schema=vol.Schema({}),
-        supports_response=SupportsResponse.ONLY,
+        vol.Schema({}),
+        SupportsResponse.ONLY,
     )
-    hass.services.async_register(
-        DOMAIN,
+    _register(
         SERVICE_CONFIGURE_HTTPS,
         _async_handle_configure_https,
-        schema=vol.Schema({vol.Optional(CONF_RESTART, default=True): cv.boolean}),
-        supports_response=SupportsResponse.OPTIONAL,
+        vol.Schema({vol.Optional(CONF_RESTART, default=True): cv.boolean}),
     )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_PROMOTE_HTTPS,
-        _async_handle_promote_https,
-        schema=vol.Schema({}),
-        supports_response=SupportsResponse.OPTIONAL,
+    _register(SERVICE_PROMOTE_HTTPS, _async_handle_promote_https, vol.Schema({}))
+    _register(SERVICE_DIAGNOSE, _async_handle_diagnose, vol.Schema({}))
+    _register(SERVICE_VERIFY_CERT, _async_handle_verify_cert, vol.Schema({}))
+    _register(
+        SERVICE_BACKUP_CERT,
+        _async_handle_backup_cert,
+        vol.Schema({vol.Optional("path"): cv.string}),
+    )
+    _register(
+        SERVICE_RESTORE_CERT,
+        _async_handle_restore_cert,
+        vol.Schema({vol.Required("path"): cv.string}),
     )

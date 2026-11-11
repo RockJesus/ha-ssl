@@ -4,7 +4,7 @@ renew:
 
 configure_https:
   name: 写入 HTTPS 配置并重启
-  description: 把 ssl_certificate / ssl_key 写入 configuration.yaml（自动备份），随后重启 Home Assistant 使 HTTPS 生效。
+  description: 把 ssl_certificate / ssl_key 写入 Home Assistant 的 HTTP 配置（新版写 .storage/http，旧版写 configuration.yaml），端口与 TLS 档位取自集成选项，随后重启以生效。
   fields:
     restart:
       name: 自动重启
@@ -24,4 +24,35 @@ promote_https:
 
 update_ddns:
   name: 立即更新动态域名
-  description: 立刻查询公网 IPv4/IPv6 并与 A/AAAA 记录比对，必要时通过 DNS 服务商接口改写记录（CNAME 也会一并核对）。
+  description: 立刻查询公网 IPv4/IPv6 并按记录清单核对全部 A / AAAA / CNAME / TXT 记录，返回逐条结果、双栈状态与最近变更历史。
+
+diagnose:
+  name: 网络与证书诊断
+  description: 检测本机 IPv4/IPv6 出网、公网地址、DNS 服务商 zone 定位与证书链/私钥匹配情况，返回结构化结果。
+
+verify_cert:
+  name: 校验证书文件
+  description: 检查磁盘上的证书与私钥是否匹配、证书链是否完整、SAN 覆盖哪些域名、还有多少天到期。
+
+backup_cert:
+  name: 备份证书
+  description: 把 fullchain.pem 与 privkey.pem 打包成 zip，换机或重装时可直接恢复，省一次 Let's Encrypt 签发。
+  fields:
+    path:
+      name: 备份目录
+      description: 留空则写到 /config/ha_ssl_backups
+      example: /config/ha_ssl_backups
+      selector:
+        text:
+
+restore_cert:
+  name: 恢复证书
+  description: 从 backup_cert 生成的 zip 恢复证书对；会先校验证书与私钥是否匹配，再覆盖到证书目录。
+  fields:
+    path:
+      name: 备份文件
+      description: 备份 zip 的绝对路径
+      required: true
+      example: /config/ha_ssl_backups/ha_ssl_backup_20260101010101.zip
+      selector:
+        text:
