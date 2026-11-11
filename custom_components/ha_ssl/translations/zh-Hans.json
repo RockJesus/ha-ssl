@@ -47,17 +47,23 @@
   "options": {
     "step": {
       "init": {
-        "title": "续期设置",
-        "description": "默认提前 30 天自动续签；续签成功后重启一次以加载新证书。",
+        "title": "续期与动态域名",
+        "description": "证书默认提前 30 天自动续签，续签成功后重启一次以加载新证书。\n\n**动态域名（DDNS）**：可选。打开后会定时查询本机公网 IPv4，并在地址变化时改写 {domain} 所在域名的 A 记录——这就是原来交给 Lucky / 路由器 DDNS 的那件事。只改 DNS 记录，不参与证书签发。",
         "data": {
           "auto_renew": "自动续期",
           "renew_days": "提前多少天续期",
-          "restart_after_renew": "续期成功后自动重启 Home Assistant"
+          "restart_after_renew": "续期成功后自动重启 Home Assistant",
+          "ddns_enabled": "启用动态域名解析",
+          "ddns_record": "要更新的域名",
+          "ddns_interval": "检查间隔"
         },
         "data_description": {
           "auto_renew": "关闭后只有点「立即签发」按钮才会续期",
           "renew_days": "剩余天数低于该值时开始续签，可选 7–89 天",
-          "restart_after_renew": "Home Assistant 只在启动时读取证书，不重启则新证书不生效；关闭后需你手动重启"
+          "restart_after_renew": "Home Assistant 只在启动时读取证书，不重启则新证书不生效；关闭后需你手动重启",
+          "ddns_enabled": "定时比对公网 IP 与 A 记录，变化时通过同一个 DNS 服务商接口改写记录",
+          "ddns_record": "留空则使用证书域名。只能填这个服务商账号下已有的域名或子域名；记录不存在时会自动创建 A 记录",
+          "ddns_interval": "查询公网 IP 并检查记录的间隔，默认 5 分钟"
         }
       }
     }
@@ -69,6 +75,9 @@
       },
       "days_left": {
         "name": "证书剩余天数"
+      },
+      "public_ip": {
+        "name": "公网 IP"
       }
     },
     "binary_sensor": {
@@ -105,6 +114,10 @@
     "promote_https": {
       "name": "固化 HTTPS 配置",
       "description": "确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。"
+    },
+    "update_ddns": {
+      "name": "立即更新动态域名",
+      "description": "立刻查询公网 IPv4 并与 A 记录比对，必要时改写记录；返回当前 IP、记录值与结果。"
     }
   }
 }

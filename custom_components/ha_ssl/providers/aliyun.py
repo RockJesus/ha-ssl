@@ -203,6 +203,78 @@ class AliyunProvider(DnsProvider):
                 return
             raise
 
+    @staticmethod
+    def _apex(rr: str) -> str:
+        """Aliyun uses @ for the zone apex."""
+        return rr or "@"
+
+    async def async_list_records(
+        self, zone: str, rr: str, rtype: str = "A"
+    ) -> list[dict[str, Any]]:
+        """List records at a relative name with their values."""
+        rr_ali = self._apex(rr)
+        payload = await self._async_request(
+            "DescribeDomainRecords",
+            {
+                "DomainName": zone,
+                "RRKeyWord": rr_ali,
+                "TypeKeyWord": rtype,
+                "PageSize": "100",
+            },
+        )
+        records = payload.get("DomainRecords", {}).get("Record", [])
+        return [
+            {
+                "value": str(item.get("Value")),
+                "handle": str(item.get("RecordId")),
+                "ttl": int(item.get("TTL") or 600),
+            }
+            for item in records
+            if str(item.get("RR", "")).lower() == rr_ali.lower()
+            and str(item.get("Type", "")).upper() == rtype.upper()
+            and item.get("RecordId")
+        ]
+
+    async def async_add_record(
+        self, zone: str, rr: str, rtype: str, value: str, ttl: int = 600
+    ) -> str:
+        """Create an A/AAAA record and return its RecordId."""
+        payload = await self._async_request(
+            "AddDomainRecord",
+            {
+                "DomainName": zone,
+                "RR": self._apex(rr),
+                "Type": rtype,
+                "Value": value,
+                "TTL": str(max(600, ttl)),
+            },
+        )
+        record_id = payload.get("RecordId")
+        if not record_id:
+            raise DnsProviderError(f"创建 {rtype} 记录失败：响应缺少 RecordId", payload)
+        return str(record_id)
+
+    async def async_update_record(
+        self,
+        zone: str,
+        rr: str,
+        rtype: str,
+        handle: str,
+        value: str,
+        ttl: int = 600,
+    ) -> None:
+        """Update an existing record in place."""
+        await self._async_request(
+            "UpdateDomainRecord",
+            {
+                "RecordId": handle,
+                "RR": self._apex(rr),
+                "Type": rtype,
+                "Value": value,
+                "TTL": str(max(600, ttl)),
+            },
+        )
+
     async def async_list_txt(
         self, zone: str, rr: str, value: str | None = None
     ) -> list[str]:

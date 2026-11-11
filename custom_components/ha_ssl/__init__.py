@@ -29,15 +29,19 @@ from .cert_manager import (
     async_sync_external_url,
 )
 from .const import (
+    CONF_DDNS_ENABLED,
     CONF_RESTART,
+    DEFAULT_DDNS_ENABLED,
     DOMAIN,
     PLATFORMS,
     SERVICE_CONFIGURE_HTTPS,
     SERVICE_PROMOTE_HTTPS,
     SERVICE_PROBE,
     SERVICE_RENEW,
+    SERVICE_UPDATE_DDNS,
 )
 from .coordinator import AcmeCertCoordinator
+from .ddns import DdnsCoordinator
 from .probe import (
     async_probe_cas,
     async_probe_self,
@@ -54,6 +58,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = AcmeCertCoordinator(hass, entry, manager)
 
     await coordinator.async_config_entry_first_refresh()
+
+    coordinator.ddns = None
+    if entry.options.get(CONF_DDNS_ENABLED, DEFAULT_DDNS_ENABLED):
+        ddns = DdnsCoordinator(hass, entry, manager.domain)
+        await ddns.async_config_entry_first_refresh()
+        coordinator.ddns = ddns
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
@@ -140,6 +150,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
         if coordinator is not None:
+            ddns = getattr(coordinator, "ddns", None)
+            if ddns is not None:
+                await ddns.async_shutdown()
             await coordinator.manager.async_close()
     return unload_ok
 
@@ -246,10 +259,35 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("固化 HTTPS 配置：%s", message)
         return {"message": message}
 
+    async def _async_handle_update_ddns(call: ServiceCall) -> ServiceResponse:
+        """Refresh the A record right now and report what happened."""
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        ddns = getattr(coordinator, "ddns", None)
+        if ddns is None:
+            return {"message": "动态域名未启用，请先在集成选项里打开「动态域名解析」"}
+        await ddns.async_update_now()
+        result = ddns.as_dict()
+        message = {
+            "updated": f"已更新为 {result['public_ip']}",
+            "unchanged": f"记录已是最新：{result['public_ip']}",
+            "failed": f"更新失败：{result['error']}",
+        }[result["condition"]]
+        _LOGGER.info("手动更新 DDNS：%s", message)
+        return {"message": message, **result}
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_RENEW,
         _async_handle_renew,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_DDNS,
+        _async_handle_update_ddns,
         schema=vol.Schema({}),
         supports_response=SupportsResponse.OPTIONAL,
     )

@@ -65,6 +65,43 @@ class DnsProvider(ABC):
             except DnsProviderError as err:
                 _LOGGER.debug("清理旧 TXT 记录失败：%s", err)
 
+    async def async_list_records(
+        self, zone: str, rr: str, rtype: str = "A"
+    ) -> list[dict[str, Any]]:
+        """Return existing records at a relative name.
+
+        Each entry is ``{"value": str, "handle": str, "ttl": int}``. An empty
+        list means the name has no record of that type at all.
+        """
+        return []
+
+    async def async_add_record(
+        self, zone: str, rr: str, rtype: str, value: str, ttl: int = 600
+    ) -> str:
+        """Create a record and return an opaque handle."""
+        raise DnsProviderError(f"{self.label} 不支持创建 {rtype} 记录")
+
+    async def async_update_record(
+        self,
+        zone: str,
+        rr: str,
+        rtype: str,
+        handle: str,
+        value: str,
+        ttl: int = 600,
+    ) -> None:
+        """Change the value of an existing record."""
+        raise DnsProviderError(f"{self.label} 不支持修改 {rtype} 记录")
+
+    async def async_delete_record(self, handle: str) -> None:
+        """Delete a record; handles share the TXT helper format."""
+        await self.async_delete_txt(handle)
+
+    @staticmethod
+    def _apex(rr: str) -> str:
+        """Map the empty relative name to the provider's apex placeholder."""
+        return rr
+
     def async_describe(self) -> str:
         """Human readable provider name for entities and logs."""
         return self.label

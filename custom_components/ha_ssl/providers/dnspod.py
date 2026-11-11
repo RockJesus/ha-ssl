@@ -151,6 +151,90 @@ class DnspodProvider(DnsProvider):
                 return
             raise
 
+    @staticmethod
+    def _apex(rr: str) -> str:
+        """DNSPod uses @ for the zone apex."""
+        return rr or "@"
+
+    async def async_list_records(
+        self, zone: str, rr: str, rtype: str = "A"
+    ) -> list[dict[str, Any]]:
+        """List records at a relative name with their values."""
+        rr_dp = self._apex(rr)
+        try:
+            payload = await self._async_post(
+                "Record.List",
+                {
+                    "domain": zone,
+                    "sub_domain": rr_dp,
+                    "record_type": rtype,
+                    "length": str(MAX_PAGE_SIZE),
+                },
+            )
+        except DnsProviderError as err:
+            if err.code == EMPTY_RESULT:
+                return []
+            raise
+
+        return [
+            {
+                "value": str(item.get("value")),
+                "handle": f"{zone}|{item['id']}",
+                "ttl": int(item.get("ttl") or 600),
+            }
+            for item in payload.get("records") or []
+            if str(item.get("name", "")).lower() == rr_dp.lower()
+            and str(item.get("type", "")).upper() == rtype.upper()
+            and item.get("id")
+        ]
+
+    async def async_add_record(
+        self, zone: str, rr: str, rtype: str, value: str, ttl: int = 600
+    ) -> str:
+        """Create a record and return a zone|record_id handle."""
+        payload = await self._async_post(
+            "Record.Create",
+            {
+                "domain": zone,
+                "sub_domain": self._apex(rr),
+                "record_type": rtype,
+                "record_line": RECORD_LINE,
+                "value": value,
+                "ttl": str(max(600, ttl)),
+            },
+        )
+        record = payload.get("record") or {}
+        record_id = record.get("id")
+        if not record_id:
+            raise DnsProviderError(f"创建 {rtype} 记录失败：响应缺少 record.id", payload)
+        return f"{zone}|{record_id}"
+
+    async def async_update_record(
+        self,
+        zone: str,
+        rr: str,
+        rtype: str,
+        handle: str,
+        value: str,
+        ttl: int = 600,
+    ) -> None:
+        """Update an existing record in place."""
+        _, _, record_id = handle.partition("|")
+        if not record_id:
+            raise DnsProviderError(f"无效的 DNSPod 记录句柄：{handle}")
+        await self._async_post(
+            "Record.Modify",
+            {
+                "domain": zone,
+                "record_id": record_id,
+                "sub_domain": self._apex(rr),
+                "record_type": rtype,
+                "record_line": RECORD_LINE,
+                "value": value,
+                "ttl": str(max(600, ttl)),
+            },
+        )
+
     async def async_list_txt(self, zone: str, rr: str) -> list[str]:
         """List TXT records at a relative name."""
         handles: list[str] = []

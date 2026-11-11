@@ -130,6 +130,90 @@ class CloudflareProvider(DnsProvider):
                 return
             raise
 
+    async def async_list_records(
+        self, zone: str, rr: str, rtype: str = "A"
+    ) -> list[dict[str, Any]]:
+        """List records at a full name, filtered locally by type."""
+        zone_id = await self._async_zone_id(zone)
+        target = (f"{rr}.{zone}" if rr else zone).lower()
+        records: list[dict[str, Any]] = []
+
+        page = 1
+        while page <= MAX_PAGES:
+            payload = await self._async_request(
+                "GET",
+                f"/zones/{zone_id}/dns_records",
+                params={"type": rtype, "page": page, "per_page": RECORD_PAGE_SIZE},
+            )
+            for item in payload.get("result") or []:
+                if (
+                    str(item.get("name", "")).lower().rstrip(".") == target
+                    and item.get("id")
+                ):
+                    records.append(
+                        {
+                            "value": str(item.get("content")),
+                            "handle": f"{zone_id}|{item['id']}",
+                            "ttl": int(item.get("ttl") or 600),
+                        }
+                    )
+
+            info = payload.get("result_info") or {}
+            if page >= int(info.get("total_pages") or 1):
+                break
+            page += 1
+
+        return records
+
+    async def async_add_record(
+        self, zone: str, rr: str, rtype: str, value: str, ttl: int = 600
+    ) -> str:
+        """Create a record and return a zone_id|record_id handle."""
+        zone_id = await self._async_zone_id(zone)
+        name = f"{rr}.{zone}" if rr else zone
+        payload = await self._async_request(
+            "POST",
+            f"/zones/{zone_id}/dns_records",
+            json={
+                "type": rtype,
+                "name": name,
+                "content": value,
+                "ttl": max(60, ttl),
+                "comment": "ha ssl ddns",
+            },
+        )
+        record = payload.get("result") or {}
+        record_id = record.get("id")
+        if not record_id:
+            raise DnsProviderError(f"创建 {rtype} 记录失败：响应缺少记录 id", payload)
+        return f"{zone_id}|{record_id}"
+
+    async def async_update_record(
+        self,
+        zone: str,
+        rr: str,
+        rtype: str,
+        handle: str,
+        value: str,
+        ttl: int = 600,
+    ) -> None:
+        """Update a record in place."""
+        zone_id, _, record_id = handle.partition("|")
+        if not record_id:
+            raise DnsProviderError(f"无效的 Cloudflare 记录句柄：{handle}")
+        name = f"{rr}.{zone}" if rr else zone
+        await self._async_request(
+            "PUT",
+            f"/zones/{zone_id}/dns_records/{record_id}",
+            json={
+                "type": rtype,
+                "name": name,
+                "content": value,
+                "ttl": max(60, ttl),
+                "comment": "ha ssl ddns",
+            },
+        )
+
     async def async_list_txt(self, zone: str, rr: str) -> list[str]:
         """List TXT records at a relative name by filtering locally.
 

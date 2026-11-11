@@ -26,6 +26,11 @@ CONF_RENEW_DAYS = "renew_days"
 CONF_RESTART_AFTER_RENEW = "restart_after_renew"
 CONF_RESTART = "restart"
 
+# 动态域名（DDNS）
+CONF_DDNS_ENABLED = "ddns_enabled"
+CONF_DDNS_RECORD = "ddns_record"
+CONF_DDNS_INTERVAL = "ddns_interval"
+
 # 服务商凭据
 CONF_ALIYUN_ACCESS_KEY_ID = "aliyun_access_key_id"
 CONF_ALIYUN_ACCESS_KEY_SECRET = "aliyun_access_key_secret"
@@ -48,6 +53,21 @@ DEFAULT_RESTART_AFTER_RENEW = True
 DEFAULT_STAGING = False
 DEFAULT_WAIT_TIMEOUT = 300
 DEFAULT_UPDATE_INTERVAL = timedelta(hours=6)
+
+# DDNS
+DEFAULT_DDNS_ENABLED = False
+DEFAULT_DDNS_INTERVAL = 5
+DDNS_MIN_INTERVAL = 1
+DDNS_MAX_INTERVAL = 1440
+DDNS_RECORD_TYPE = "A"
+DDNS_TTL = 600
+PUBLIC_IP_TIMEOUT = 10
+PUBLIC_IP_ENDPOINTS = (
+    "https://api.ipify.org",
+    "https://ipv4.icanhazip.com",
+    "https://ifconfig.me/ip",
+    "https://ipinfo.io/ip",
+)
 
 CERT_FILE_NAME = "fullchain.pem"
 KEY_FILE_NAME = "privkey.pem"
@@ -82,6 +102,7 @@ SERVICE_RENEW = "renew"
 SERVICE_CONFIGURE_HTTPS = "configure_https"
 SERVICE_PROBE = "probe"
 SERVICE_PROMOTE_HTTPS = "promote_https"
+SERVICE_UPDATE_DDNS = "update_ddns"
 ATTR_RESTART = "restart"
 
 # 平台

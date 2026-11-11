@@ -47,17 +47,23 @@
   "options": {
     "step": {
       "init": {
-        "title": "Renewal",
-        "description": "Renews automatically 30 days before expiry, then restarts once so the new certificate is loaded.",
+        "title": "Renewal and dynamic DNS",
+        "description": "Certificates renew 30 days before expiry by default, and Home Assistant restarts once to load the new one.\n\n**Dynamic DNS** is optional. When enabled the integration periodically reads this installation's public IPv4 and rewrites the A record of {domain} whenever it changes — the same job Lucky or your router's DDNS used to do. It only edits the DNS record; certificate issuance is unaffected.",
         "data": {
           "auto_renew": "Automatic renewal",
           "renew_days": "Renew this many days before expiry",
-          "restart_after_renew": "Restart Home Assistant after a successful renewal"
+          "restart_after_renew": "Restart Home Assistant after renewal",
+          "ddns_enabled": "Enable dynamic DNS",
+          "ddns_record": "Record to keep updated",
+          "ddns_interval": "Check interval"
         },
         "data_description": {
-          "auto_renew": "When off, renewal only happens via the Issue now button",
-          "renew_days": "Renew when the remaining days drop below this value (7-89)",
-          "restart_after_renew": "Home Assistant reads the certificate at startup; without a restart the new certificate is not served"
+          "auto_renew": "When off, renewal only happens via the issue button",
+          "renew_days": "Renew when fewer days are left; 7–89",
+          "restart_after_renew": "Home Assistant reads the certificate only at startup",
+          "ddns_enabled": "Compares the public IP with the A record and updates it through the same DNS provider",
+          "ddns_record": "Empty means the certificate domain. Must exist in the provider account; a missing A record is created automatically",
+          "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default"
         }
       }
     }
@@ -69,6 +75,9 @@
       },
       "days_left": {
         "name": "Days until expiry"
+      },
+      "public_ip": {
+        "name": "Public IP"
       }
     },
     "binary_sensor": {
@@ -105,6 +114,10 @@
     "promote_https": {
       "name": "Confirm HTTPS config",
       "description": "Promote the pending HTTPS config to the stable one and cancel the 5-minute auto-revert."
+    },
+    "update_ddns": {
+      "name": "Update dynamic DNS now",
+      "description": "Read the public IPv4 immediately, compare it with the A record and rewrite it when needed."
     }
   }
 }

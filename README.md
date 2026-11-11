@@ -5,7 +5,8 @@
 [![ACME Self Test](https://github.com/RockJesus/ha-ssl/actions/workflows/selftest.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/selftest.yml)
 [![Privacy Scan](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml/badge.svg)](https://github.com/RockJesus/ha-ssl/actions/workflows/privacy.yml)
 
-在 Home Assistant 内部完成 **Let's Encrypt 证书签发、HTTPS 自动启用与自动续期**。
+在 Home Assistant 内部完成 **Let's Encrypt 证书签发、HTTPS 自动启用与自动续期**，
+并把 **动态域名（DDNS）** 一起接管——原来交给 Lucky 或路由器的那件事也不用再单独跑了。
 只要选一个 DNS 服务商、填它的凭据，其余全自动——不需要加载项，也不需要宿主机能解析 DNS。
 
 > 适合国内环境：官方 Let's Encrypt 加载项常因镜像拉不到而装不上，或卡在 `code=SERVFAIL`——
@@ -42,11 +43,27 @@
 
 签发与启用各发一条持久通知，说明正在做什么、重启后该用哪个地址访问。
 
+## 动态域名（可选）
+
+家宽公网 IP 会变时，打开它就够了，不必再装 Lucky 之类的 DDNS 工具：
+
+设置 → 设备与服务 → HA SSL → **选项** → 打开「启用动态域名解析」。默认每 5 分钟查一次公网 IPv4，和 A 记录比对，变了才改；记录不存在时自动建一条 A。
+
+| 选项 | 说明 |
+|---|---|
+| 要更新的域名 | 留空 = 证书域名；填别的子域名也可以 |
+| 检查间隔 | 1–1440 分钟，默认 5 |
+
+- 走的是同一套服务商凭据，不额外配置。
+- 只维护 **A 记录（IPv4）**，不碰 AAAA；检测到运营商级 NAT（`100.64/10`）会直接报错提示，因为那种情况改 DNS 也没用。
+- 实体「公网 IP」显示最新检测结果，属性里有记录值、所属 zone、上次变更时间与失败原因。
+- 想立刻验证：调用服务 `ha_ssl.update_ddns`，返回当前 IP、记录值与结果（updated / unchanged / failed）。
+
 ## 实体与服务
 
 | 类型 | 实体 |
 |---|---|
-| 传感器 | 证书到期时间、剩余天数 |
+| 传感器 | 证书到期时间、剩余天数、公网 IP |
 | 二进制传感器 | 证书异常 |
 | 按钮 | 立即签发 |
 | 开关 | 自动续期 |
@@ -54,6 +71,7 @@
 | 服务 | 用途 |
 |---|---|
 | `ha_ssl.renew` | 立刻签发/续期一次 |
+| `ha_ssl.update_ddns` | 立刻比对公网 IP 并改写 A 记录 |
 | `ha_ssl.configure_https` | 写入 HTTPS 配置并重启，`restart: false` 只写不重启 |
 | `ha_ssl.promote_https` | 固化待生效的 HTTPS 配置，取消自动回退 |
 | `ha_ssl.probe` | 诊断：候选 ACME 目录连通性、本机 http/https 自检、HTTP 配置存储 |
@@ -90,6 +108,13 @@ python3 scripts/import_check.py             # 包内导入一致性
 ## 版本
 
 <details open>
+<summary>v1.2.x</summary>
+
+- **v1.2.0**：内置动态域名——定时查询公网 IPv4，A 记录变化时自动改写（也可自动新建），新增「公网 IP」传感器与 `ha_ssl.update_ddns` 服务；三家服务商都补了记录查询/新建/修改；检测到运营商级 NAT 直接给出明确提示
+
+</details>
+
+<details>
 <summary>v1.1.x</summary>
 
 - **v1.1.9**：README 精简重写——快速开始、服务商凭据表、自动流程与排障入口按官方结构整理，版本历史折叠

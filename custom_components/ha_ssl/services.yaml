@@ -21,3 +21,7 @@ probe:
 promote_https:
   name: 固化 HTTPS 配置
   description: 确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。
+
+update_ddns:
+  name: 立即更新动态域名
+  description: 立刻查询公网 IPv4 并与 A 记录比对，必要时通过 DNS 服务商接口改写记录。

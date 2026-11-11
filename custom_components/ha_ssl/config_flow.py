@@ -21,6 +21,9 @@ from .const import (
     CONF_AUTO_RENEW,
     CONF_CERT_DIR,
     CONF_CLOUDFLARE_API_TOKEN,
+    CONF_DDNS_ENABLED,
+    CONF_DDNS_INTERVAL,
+    CONF_DDNS_RECORD,
     CONF_DNSPOD_TOKEN,
     CONF_DNSPOD_TOKEN_ID,
     CONF_DOMAIN,
@@ -30,8 +33,12 @@ from .const import (
     CONF_STAGING,
     DEFAULT_AUTO_RENEW,
     DEFAULT_CERT_DIR,
+    DEFAULT_DDNS_ENABLED,
+    DEFAULT_DDNS_INTERVAL,
     DEFAULT_RENEW_DAYS,
     DEFAULT_RESTART_AFTER_RENEW,
+    DDNS_MAX_INTERVAL,
+    DDNS_MIN_INTERVAL,
     DOMAIN,
     PROVIDER_ALIYUN,
     PROVIDER_CLOUDFLARE,
@@ -247,6 +254,31 @@ class HaSslOptionsFlow(OptionsFlow):
                             CONF_RESTART_AFTER_RENEW, DEFAULT_RESTART_AFTER_RENEW
                         ),
                     ): bool,
+                    vol.Optional(
+                        CONF_DDNS_ENABLED,
+                        default=options.get(CONF_DDNS_ENABLED, DEFAULT_DDNS_ENABLED),
+                    ): bool,
+                    vol.Optional(
+                        CONF_DDNS_RECORD,
+                        default=str(options.get(CONF_DDNS_RECORD) or ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_DDNS_INTERVAL,
+                        default=int(
+                            options.get(CONF_DDNS_INTERVAL, DEFAULT_DDNS_INTERVAL)
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=DDNS_MIN_INTERVAL,
+                            max=DDNS_MAX_INTERVAL,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                            unit_of_measurement="分钟",
+                        )
+                    ),
                 }
             ),
+            description_placeholders={
+                "domain": self.config_entry.data.get(CONF_DOMAIN, ""),
+            },
         )
