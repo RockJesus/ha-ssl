@@ -115,6 +115,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <details open>
 <summary>v1.2.x</summary>
 
+- **v1.2.4**：补回 manifest 的 `dependencies: ["http"]`（换版本号时漏了，Hassfest 报 DEPENDENCIES）；功能同 v1.2.3
 - **v1.2.3**：DDNS 扩到全部记录类型——新增 AAAA（IPv6）与可选 CNAME 别名，逐类型独立对账；新增「公网 IPv6」传感器
 - **v1.2.2**：修复「公网 IP」传感器缺少 `has_entity_name` 导致名字不走翻译、实体 id 退化成设备名
 - **v1.2.1**：修正文档里保留网段的写法（`100.64/10`），避免脱敏扫描把它误判成公网 IP；功能无变化
