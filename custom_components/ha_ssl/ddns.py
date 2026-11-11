@@ -71,13 +71,14 @@ def _octets(value: str) -> list[int] | None:
 
 
 def _is_cgnat(value: str) -> bool:
-    """100.64.0.0/10 means the carrier NATs you: no inbound port is possible."""
+    """Reserved shared-address range (100.64/10): the carrier NATs you, so no
+    inbound port can ever reach this host."""
     numbers = _octets(value)
     return bool(numbers) and numbers[0] == 100 and 64 <= numbers[1] <= 127
 
 
 def _is_private(value: str) -> bool:
-    """Whether the address is unusable as a public endpoint."""
+    """Whether the address belongs to a private or reserved range."""
     numbers = _octets(value)
     if not numbers:
         return True
@@ -114,7 +115,7 @@ async def async_get_public_ip(session: aiohttp.ClientSession) -> tuple[str, str]
         ip = match.group(1)
         if _is_cgnat(ip):
             raise DdnsError(
-                "运营商级 NAT（100.64/10）：公网地址不落在你的路由器上，"
+                "运营商级 NAT（100.64/10 保留网段）：公网地址不落在你的路由器上，"
                 "改 DNS 记录也无法从外网访问，请改用内网穿透或申请公网 IP"
             )
         if _is_private(ip):
