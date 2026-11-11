@@ -128,6 +128,7 @@ class CertDaysLeftSensor(_CertBaseEntity, SensorEntity):
 class PublicIpSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
     """Public IPv4 of this installation, i.e. what the A record should hold."""
 
+    _attr_has_entity_name = True
     _attr_translation_key = "public_ip"
     _attr_icon = "mdi:ip-network"
 
