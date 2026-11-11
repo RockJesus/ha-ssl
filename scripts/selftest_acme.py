@@ -78,8 +78,8 @@ async def main():
     client = acme.AcmeClient(session, "https://acme.test/directory", key)
     await client.async_initialize()
     events = []
-    async def prepare(value):
-        events.append(("prepare", value))
+    async def prepare(identifier, value):
+        events.append(("prepare", identifier, value))
     async def cleanup():
         events.append(("cleanup", None))
     chain, key_pem = await client.async_issue("example.com", prepare, cleanup, 30)
