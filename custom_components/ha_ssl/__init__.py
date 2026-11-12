@@ -121,10 +121,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if message:
                 _LOGGER.info(message)
             if result.get("needs_restart"):
-                _LOGGER.info("HTTP 配置有变化（%s），3 秒后重启生效", result["message"])
+                _LOGGER.info("HTTP 配置有变化（%s），等待用户重启", result["message"])
                 hass.async_create_task(
                     hass.services.async_call(
-                        "homeassistant", "restart", {}, blocking=False
+                        "persistent_notification",
+                        "create",
+                        {
+                            "title": "HA SSL：HTTP 配置已更新",
+                            "notification_id": "ha_ssl_restart_needed",
+                            "message": (
+                                f"{result['message']}。\n\n"
+                                "这次改动需要重启 Home Assistant 才生效，"
+                                "集成不会自动重启。\n"
+                                "请到「设置 → 系统 → 右上角电源菜单 → 重启 Home Assistant」，"
+                                "或在开发者工具里调用 `homeassistant.restart`。"
+                            ),
+                        },
+                        blocking=False,
                     )
                 )
                 return
@@ -210,20 +223,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                     "notification_id": "ha_ssl_removed",
                     "message": (
                         f"{result['message']}。证书文件仍保留在 /config/ssl，"
-                        "如需一并清理请先调用 ha_ssl.purge。15 秒后自动重启生效。"
+                        "如需一并清理请先调用 ha_ssl.purge。\n\n"
+                        "集成不会自动重启：请到「设置 → 系统 → 右上角电源菜单 → "
+                        "重启 Home Assistant」，端口恢复才会生效。"
                     ),
                 },
                 blocking=False,
             )
         )
 
-        async def _restart_later() -> None:
-            await asyncio.sleep(15)
-            await hass.services.async_call(
-                "homeassistant", "restart", {}, blocking=False
-            )
-
-        hass.async_create_task(_restart_later())
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
