@@ -143,6 +143,9 @@
     "button": {
       "issue": {
         "name": "Issue now"
+      },
+      "sync_https": {
+        "name": "Sync HTTP settings"
       }
     },
     "switch": {

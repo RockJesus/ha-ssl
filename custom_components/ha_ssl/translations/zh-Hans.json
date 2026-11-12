@@ -143,6 +143,9 @@
     "button": {
       "issue": {
         "name": "立即签发"
+      },
+      "sync_https": {
+        "name": "同步 HTTP 设置"
       }
     },
     "switch": {
