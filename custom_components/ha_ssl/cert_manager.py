@@ -771,15 +771,15 @@ async def async_restore_default_port(
         return {"changed": False, "message": "旧版 YAML 配置，未自动改端口"}
 
     store = await async_get_and_load_store(hass)
-    stable = store.stable or {}
-    stored = _coerce_port(stable.get("server_port"))
+    active = store.pending or store.stable or {}
+    stored = _coerce_port(active.get("server_port"))
     wanted = _coerce_port(current_port)
     if stored == default or stored != wanted:
         return {
             "changed": False,
             "message": f"HTTP 端口是 {stored}，无需恢复默认",
         }
-    config = dict(stable)
+    config = dict(active)
     config["server_port"] = default
     await store.async_set_pending(config)
     return {
@@ -922,9 +922,10 @@ async def async_apply_https_config(
             cfg.get("ssl_certificate") == fullchain
             and cfg.get("ssl_key") == key
         )
+    active_cfg = store.pending or store.stable or {}
     port_ok = (
         wanted_port is None
-        or _coerce_port((store.stable or {}).get("server_port")) == wanted_port
+        or _coerce_port(active_cfg.get("server_port")) == wanted_port
     )
     # 只有“当前生效的配置”已经是这套证书（且端口也对）才算无需修改；
     # pending 匹配但 stable 仍是旧值时，必须重写 pending 并在重启后生效。

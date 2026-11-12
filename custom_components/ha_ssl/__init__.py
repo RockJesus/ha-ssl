@@ -10,7 +10,6 @@ from datetime import datetime
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -23,6 +22,7 @@ from homeassistant.helpers.event import async_call_later
 from .cert_manager import (
     CertManager,
     async_apply_https_config,
+    async_config_uses_cert,
     async_http_active_port,
     async_local_tls_ready,
     async_maybe_enable_https,
@@ -101,30 +101,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     manager = coordinator.manager
 
+    async def _notify_restart(message: str) -> None:
+        """Tell the user a restart is required, never restart on our own."""
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "HA SSL：HTTP 配置已更新",
+                "notification_id": "ha_ssl_restart_needed",
+                "message": (
+                    f"{message}。\n\n"
+                    "这次改动需要重启 Home Assistant 才生效，集成不会自动重启。\n"
+                    "请到「设置 → 系统 → 右上角电源菜单 → 重启 Home Assistant」，"
+                    "或在开发者工具里调用 `homeassistant.restart`。"
+                ),
+            },
+            blocking=False,
+        )
+
     async def _async_watch_tls() -> None:
-        """等本机 TLS 真能应答：先固化，再把 external_url 切到 https。"""
+        """Apply the HTTP settings once the local server really answers."""
         for _ in range(24):
-            https_port = entry.options.get(CONF_HTTPS_PORT)
             active_port = await async_http_active_port(hass)
-            if not await async_local_tls_ready(hass, active_port):
+            configured = await async_config_uses_cert(
+                hass, manager.fullchain_path
+            )
+            # 只有“已经配了这张证书”才需要等 TLS 应答；还停在 HTTP 时
+            # 必须先把配置写进去，否则永远不会启动 HTTPS。
+            if configured and not await async_local_tls_ready(
+                hass, active_port
+            ):
                 await asyncio.sleep(10)
                 continue
+            if configured:
+                try:
+                    promoted = await async_maybe_promote_https(
+                        hass, manager.fullchain_path, active_port
+                    )
+                except Exception:  # noqa: BLE001 - 固化失败不应打断启动
+                    _LOGGER.exception("固化待确认的 HTTP 配置失败")
+                    promoted = None
+                if promoted:
+                    _LOGGER.info(promoted)
             try:
-                promoted = await async_maybe_promote_https(
-                    hass, manager.fullchain_path, active_port
+                result = await async_apply_https_config(
+                    hass,
+                    manager.fullchain_path,
+                    manager.key_path,
+                    port=entry.options.get(CONF_HTTPS_PORT),
+                    tls_profile=entry.options.get(CONF_TLS_PROFILE),
                 )
-            except Exception:  # noqa: BLE001 - 探测/固化失败不应打断启动
-                _LOGGER.exception("固化待确认的 HTTP 配置失败")
-                promoted = None
-            if promoted:
-                _LOGGER.info(promoted)
-            result = await async_apply_https_config(
-                hass,
-                manager.fullchain_path,
-                manager.key_path,
-                port=entry.options.get(CONF_HTTPS_PORT),
-                tls_profile=entry.options.get(CONF_TLS_PROFILE),
-            )
+            except Exception:  # noqa: BLE001 - 证书缺失时不要打断启动
+                _LOGGER.exception("对齐 HTTP 配置失败")
+                return
+            # 配置还没生效前不要改 external_url，否则会出现“只有域名同步了”
+            if result.get("needs_restart"):
+                _LOGGER.info("HTTP 配置有变化（%s），等待用户重启", result["message"])
+                await _notify_restart(str(result.get("message") or "HTTP 配置已更新"))
+                return
             message = await async_sync_external_url(
                 hass,
                 manager.domain,
@@ -132,27 +166,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             if message:
                 _LOGGER.info(message)
-            if result.get("needs_restart"):
-                _LOGGER.info("HTTP 配置有变化（%s），等待用户重启", result["message"])
-                hass.async_create_task(
-                    hass.services.async_call(
-                        "persistent_notification",
-                        "create",
-                        {
-                            "title": "HA SSL：HTTP 配置已更新",
-                            "notification_id": "ha_ssl_restart_needed",
-                            "message": (
-                                f"{result['message']}。\n\n"
-                                "这次改动需要重启 Home Assistant 才生效，"
-                                "集成不会自动重启。\n"
-                                "请到「设置 → 系统 → 右上角电源菜单 → 重启 Home Assistant」，"
-                                "或在开发者工具里调用 `homeassistant.restart`。"
-                            ),
-                        },
-                        blocking=False,
-                    )
-                )
-                return
             return
 
     watch_task: asyncio.Task | None = None
@@ -164,41 +177,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     if enabled:
         _LOGGER.info(enabled)
-        hass.async_create_task(
-            hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title": "HA SSL 正在启用 HTTPS",
-                    "notification_id": "ha_ssl_enabling_https",
-                    "message": (
-                        "证书已写入 Home Assistant 的 HTTPS 配置，"
-                        "Home Assistant 将自动重启一次。\n\n"
-                        f"重启后请改用 `https://{manager.domain}:8123` 访问，"
-                        "iOS App 里的服务器地址也要同步改成 https。\n\n"
-                        "集成会在重启后自动确认配置（无需手动操作）；"
-                        "若 5 分钟内 HTTPS 仍不可用，会自动回退到原来的明文配置。"
-                    ),
-                },
-                blocking=False,
-            )
+        port = entry.options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT)
+        await _notify_restart(
+            f"证书已写入 Home Assistant 的 HTTPS 配置（端口 {port}），"
+            f"重启后请改用 `https://{manager.domain}:{port}` 访问，"
+            "iOS App 里的服务器地址也要同步改成 https。"
+            "集成会在重启后自动确认配置；若 5 分钟内 HTTPS 仍不可用，"
+            "会自动回退到原来的明文配置。"
         )
 
-        async def _async_restart(_event=None) -> None:
-            """setup 阶段 HA 还没 running，restart 会被拒，等启动完成再调。"""
-            try:
-                await hass.services.async_call(
-                    "homeassistant", "restart", {}, blocking=False
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("自动重启失败，请手动重启以应用 HTTPS 配置")
-
-        if hass.is_running:
-            hass.async_create_task(_async_restart())
-        else:
-            hass.bus.async_listen_once(
-                EVENT_HOMEASSISTANT_STARTED, _async_restart
-            )
     return True
 
 
