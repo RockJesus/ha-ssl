@@ -320,7 +320,7 @@ class CertManager:
                 asyncio.TimeoutError,
             ) as err:
                 _LOGGER.exception("签发请求失败")
-                message = f"{type(err).__name__}: {err}" if str(err) else type(err).__name__
+                message = _friendly_issue_error(err)
                 self.last_error = message
                 raise CertIssueError(message) from err
             finally:
@@ -557,6 +557,30 @@ def _safe_port(parsed: Any) -> int | None:
         return parsed.port
     except ValueError:
         return None
+
+
+def _friendly_issue_error(err: Exception) -> str:
+    """Turn ACME errors into actionable Chinese text."""
+    raw = str(err)
+    lowered = raw.lower()
+    if "too many certificates" in lowered or "ratelimited" in lowered:
+        retry = ""
+        match = re.search(r"retry after (\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}) UTC", raw)
+        if match:
+            from datetime import datetime, timedelta  # noqa: PLC0415
+
+            try:
+                utc = datetime.fromisoformat(f"{match.group(1)}T{match.group(2)}")
+                local = utc + timedelta(hours=8)
+                retry = f"，最早 {local:%Y-%m-%d %H:%M}（北京时间）后可再签"
+            except ValueError:
+                retry = f"，最早 {match.group(1)} {match.group(2)} UTC 后可再签"
+        return (
+            "Let's Encrypt 限流：同一组域名 168 小时内最多签发 5 张证书"
+            f"{retry}。当前证书仍在有效期内，不需要重复签发；"
+            "等窗口过去后再点「立即签发」，或等自动续期。"
+        )
+    return f"{type(err).__name__}: {raw}" if raw else type(err).__name__
 
 
 def purge_certificate_files(
