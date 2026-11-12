@@ -481,12 +481,14 @@ def _cert_fingerprint(fullchain: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-async def async_local_tls_ready(hass: HomeAssistant) -> bool:
-    """Return True when 127.0.0.1:8123 answers over TLS."""
+async def async_local_tls_ready(
+    hass: HomeAssistant, port: int | None = 8123
+) -> bool:
+    """Return True when 127.0.0.1:<port> answers over TLS."""
     session = async_get_clientsession(hass)
     try:
         async with session.get(
-            "https://127.0.0.1:8123/api/",
+            f"https://127.0.0.1:{_coerce_port(port)}/api/",
             ssl=False,
             timeout=aiohttp.ClientTimeout(total=8),
         ) as resp:
@@ -494,6 +496,19 @@ async def async_local_tls_ready(hass: HomeAssistant) -> bool:
             return resp.status in (200, 401)
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return False
+
+
+async def async_http_active_port(hass: HomeAssistant, default: int = 8123) -> int:
+    """Return the port HA's HTTP server will use on this start."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return default
+    store = await async_get_and_load_store(hass)
+    cfg = store.pending or store.stable or {}
+    return _coerce_port(cfg.get("server_port"), default)
 
 
 async def async_config_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
@@ -722,7 +737,9 @@ async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     return bool(pending and pending.get("ssl_certificate") == fullchain)
 
 
-async def async_maybe_promote_https(hass: HomeAssistant, fullchain: str) -> str | None:
+async def async_maybe_promote_https(
+    hass: HomeAssistant, fullchain: str, port: int | None = 8123
+) -> str | None:
     """Promote our pending HTTP config once TLS is verified locally."""
     try:
         from homeassistant.components.http.config import (  # noqa: PLC0415
@@ -735,7 +752,7 @@ async def async_maybe_promote_https(hass: HomeAssistant, fullchain: str) -> str 
     pending = store.pending
     if not pending or pending.get("ssl_certificate") != fullchain:
         return None
-    if not await async_local_tls_ready(hass):
+    if not await async_local_tls_ready(hass, port):
         return None
     await store.async_promote_pending()
     return "本机 TLS 已确认可用，已自动固化为正式 HTTP 配置"

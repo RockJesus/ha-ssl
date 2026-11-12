@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_call_later
 from .cert_manager import (
     CertManager,
     async_apply_https_config,
+    async_http_active_port,
     async_local_tls_ready,
     async_maybe_enable_https,
     async_maybe_promote_https,
@@ -103,9 +104,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _async_watch_tls() -> None:
         """等本机 TLS 真能应答：先固化，再把 external_url 切到 https。"""
         for _ in range(24):
-            if not await async_local_tls_ready(hass):
+            https_port = entry.options.get(CONF_HTTPS_PORT)
+            active_port = await async_http_active_port(hass)
+            if not await async_local_tls_ready(hass, active_port):
                 await asyncio.sleep(10)
                 continue
+            try:
+                promoted = await async_maybe_promote_https(
+                    hass, manager.fullchain_path, active_port
+                )
+            except Exception:  # noqa: BLE001 - 探测/固化失败不应打断启动
+                _LOGGER.exception("固化待确认的 HTTP 配置失败")
+                promoted = None
+            if promoted:
+                _LOGGER.info(promoted)
             result = await async_apply_https_config(
                 hass,
                 manager.fullchain_path,
@@ -141,9 +153,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                 )
                 return
-            promoted = await async_maybe_promote_https(hass, manager.fullchain_path)
-            if promoted:
-                _LOGGER.info(promoted)
             return
 
     watch_task: asyncio.Task | None = None
