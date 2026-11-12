@@ -29,6 +29,7 @@ from .cert_manager import (
     async_promote_https,
     async_sync_external_url,
     async_clear_https_config,
+    async_restore_default_port,
     backup_certificate,
     clear_purge_marker,
     purge_certificate_files,
@@ -43,6 +44,7 @@ from .const import (
     CONF_RESTART,
     CONF_TLS_PROFILE,
     DEFAULT_DDNS_ENABLED,
+    DEFAULT_HTTPS_PORT,
     DOMAIN,
     PLATFORMS,
     SERVICE_BACKUP_CERT,
@@ -176,6 +178,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 EVENT_HOMEASSISTANT_STARTED, _async_restart
             )
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Restore the default HTTP port when this entry is deleted."""
+    result = await async_restore_default_port(
+        hass, entry.options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT)
+    )
+    _LOGGER.info("删除集成：%s", result.get("message"))
+    if result.get("changed"):
+        external = hass.config.external_url
+        if external and external.startswith("https://"):
+            from urllib.parse import urlparse  # noqa: PLC0415
+
+            parsed = urlparse(external)
+            plain = parsed._replace(
+                netloc=f"{parsed.hostname}:{DEFAULT_HTTPS_PORT}"
+                if parsed.hostname
+                else parsed.netloc
+            ).geturl()
+            try:
+                await hass.config.async_update(external_url=plain)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("删除集成后恢复 external_url 端口失败")
+        hass.async_create_task(
+            hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL 已删除",
+                    "notification_id": "ha_ssl_removed",
+                    "message": (
+                        f"{result['message']}。证书文件仍保留在 /config/ssl，"
+                        "如需一并清理请先调用 ha_ssl.purge。15 秒后自动重启生效。"
+                    ),
+                },
+                blocking=False,
+            )
+        )
+
+        async def _restart_later() -> None:
+            await asyncio.sleep(15)
+            await hass.services.async_call(
+                "homeassistant", "restart", {}, blocking=False
+            )
+
+        hass.async_create_task(_restart_later())
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

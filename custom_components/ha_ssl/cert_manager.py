@@ -655,6 +655,36 @@ async def async_clear_https_config(
     }
 
 
+async def async_restore_default_port(
+    hass: HomeAssistant, current_port: Any, default: int = 8123
+) -> dict[str, Any]:
+    """Put the HTTP server port back to the default when the entry is removed."""
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        return {"changed": False, "message": "旧版 YAML 配置，未自动改端口"}
+
+    store = await async_get_and_load_store(hass)
+    stable = store.stable or {}
+    stored = _coerce_port(stable.get("server_port"))
+    wanted = _coerce_port(current_port)
+    if stored == default or stored != wanted:
+        return {
+            "changed": False,
+            "message": f"HTTP 端口是 {stored}，无需恢复默认",
+        }
+    config = dict(stable)
+    config["server_port"] = default
+    await store.async_set_pending(config)
+    return {
+        "changed": True,
+        "message": f"HTTP 端口 {stored} 已改回默认 {default}，下次重启生效",
+        "needs_restart": True,
+    }
+
+
 async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     """Return True when the pending HTTP config points at our certificate."""
     try:
