@@ -558,6 +558,84 @@ def _safe_port(parsed: Any) -> int | None:
         return None
 
 
+def purge_certificate_files(
+    fullchain: str,
+    key: str,
+    account_key: str,
+    backup_dir: str,
+    remove_backups: bool = True,
+) -> dict[str, Any]:
+    """Delete the certificate, account key and (optionally) backups."""
+    removed: list[str] = []
+    failed: list[dict[str, str]] = []
+    targets = [fullchain, key, account_key]
+    if remove_backups:
+        try:
+            pattern = f"{BACKUP_FILE_PREFIX}*.zip"
+            targets.extend(str(p) for p in pathlib.Path(backup_dir).glob(pattern))
+        except OSError as err:
+            failed.append({"path": backup_dir, "error": str(err)})
+    for target in targets:
+        try:
+            if target and pathlib.Path(target).exists():
+                pathlib.Path(target).unlink()
+                removed.append(target)
+        except OSError as err:
+            failed.append({"path": target, "error": str(err)})
+    return {"removed": removed, "failed": failed}
+
+
+async def async_clear_https_config(
+    hass: HomeAssistant, fullchain: str, key: str
+) -> dict[str, Any]:
+    """Remove our certificate from HA's HTTP config (used by the purge service).
+
+    Only the two SSL keys are dropped, the rest of the HTTP config (port,
+    profile, ...) is preserved. Returns ``needs_restart`` so the caller can
+    decide whether to restart.
+    """
+    try:
+        from homeassistant.components.http.config import (  # noqa: PLC0415
+            async_get_and_load_store,
+        )
+    except ImportError:
+        cleanup = await hass.async_add_executor_job(
+            _strip_yaml_ssl, fullchain, key
+        )
+        return {
+            "mode": "yaml",
+            "changed": bool(cleanup),
+            "message": cleanup or "configuration.yaml 里没有本集成的证书配置",
+            "needs_restart": bool(cleanup),
+        }
+
+    store = await async_get_and_load_store(hass)
+    stable = store.stable or {}
+    pending = store.pending
+    ours = bool(
+        stable.get("ssl_certificate") == fullchain or stable.get("ssl_key") == key
+    )
+
+    if not ours and not (pending and pending.get("ssl_certificate") == fullchain):
+        return {
+            "mode": "storage",
+            "changed": False,
+            "message": "HTTP 配置里没有本集成的证书，无需清理",
+            "needs_restart": False,
+        }
+
+    config = dict(stable)
+    config.pop("ssl_certificate", None)
+    config.pop("ssl_key", None)
+    await store.async_set_pending(config)
+    return {
+        "mode": "storage",
+        "changed": True,
+        "message": "已从 HTTP 配置里移除证书与私钥（其余设置保留），重启后生效",
+        "needs_restart": True,
+    }
+
+
 async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     """Return True when the pending HTTP config points at our certificate."""
     try:

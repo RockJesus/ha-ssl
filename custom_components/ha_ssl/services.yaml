@@ -56,3 +56,27 @@ restore_cert:
       example: /config/ha_ssl_backups/ha_ssl_backup_20260101010101.zip
       selector:
         text:
+
+purge:
+  name: 清理集成全部痕迹
+  description: 危险操作。从 HTTP 配置里移除本集成的证书与私钥，并删除证书、ACME 账户密钥与备份；执行后重启即回到纯 HTTP。必须显式传 confirm true。
+  fields:
+    confirm:
+      name: 确认执行
+      description: 必须为 true，否则不会执行任何删除。
+      required: true
+      example: true
+      selector:
+        boolean:
+    remove_backups:
+      name: 同时删除备份
+      description: 是否删除 /config/ha_ssl_backups 里由本集成生成的备份 zip。
+      default: true
+      selector:
+        boolean:
+    restart:
+      name: 自动重启
+      description: 清理完成后是否立刻重启 Home Assistant（不重启则当前 HTTPS 仍可用，直到下次重启）。
+      default: false
+      selector:
+        boolean:

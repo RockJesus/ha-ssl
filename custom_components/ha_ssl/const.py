@@ -138,6 +138,7 @@ SERVICE_DIAGNOSE = "diagnose"
 SERVICE_VERIFY_CERT = "verify_cert"
 SERVICE_BACKUP_CERT = "backup_cert"
 SERVICE_RESTORE_CERT = "restore_cert"
+SERVICE_PURGE = "purge"
 ATTR_RESTART = "restart"
 
 # 平台

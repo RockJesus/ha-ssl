@@ -81,6 +81,7 @@ example.com      | TXT   | v=spf1 -all
 | `ha_ssl.diagnose` | 一次性体检：IPv4/IPv6 出网、公网地址、zone 定位、证书链与私钥匹配 |
 | `ha_ssl.verify_cert` | 校验磁盘上的证书：私钥是否匹配、链是否完整、SAN 覆盖哪些域名、剩余天数 |
 | `ha_ssl.backup_cert` | 把证书与私钥打包成 zip，换机/重装时直接恢复，省一次签发 |
+| `ha_ssl.purge` | 危险操作：移除 HTTP 配置里的证书、删除证书 / 账户密钥 / 备份，需显式 `confirm: true` |
 | `ha_ssl.restore_cert` | 从 zip 恢复证书对，先校验匹配再覆盖 |
 
 ## 实体与服务
@@ -138,6 +139,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <summary>v1.2.x</summary>
 
 - **v1.3.4**：修掉自动写入网址时的端口格式问题——选项里的端口是浮点数，之前会写成 `https://域名:8123.0` 这种非法地址；现在统一取整，遇到已写坏的旧值也会自动纠正；启动同步也改用选项里配置的端口
+- **v1.3.5**：新增 `ha_ssl.purge`——删除集成后可显式清理证书、ACME 账户密钥、备份并从 HTTP 配置里移除 SSL 两行（需 `confirm: true`，默认不重启）
 - **v1.3.3**：网址同步改为每次启动都检查（不再依赖「HTTP 配置已经指向本证书」这个前置条件），`configure_https` 服务执行后也顺带写回 `external_url`
 - **v1.3.2**：首次配置就能开动态 DNS（凭据校验通过后多一步「记录 / 类型 / 间隔 / TTL」）；`external_url` 为空时也会自动写成 `https://<证书域名>:<端口>`，新装实例不再触发「SSL 已启用但没配网址」的修复项
 - **v1.3.1**：`external_url` 也自动对齐——签发/续期成功后改成 `https://<证书域名>:<端口>`，不再要求原主机名与证书域名一致

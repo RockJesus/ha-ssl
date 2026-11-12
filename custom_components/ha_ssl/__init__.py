@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 
 import voluptuous as vol
@@ -27,11 +28,15 @@ from .cert_manager import (
     async_maybe_promote_https,
     async_promote_https,
     async_sync_external_url,
+    async_clear_https_config,
     backup_certificate,
+    purge_certificate_files,
     restore_certificate,
     verify_installation,
 )
 from .const import (
+    ACCOUNT_KEY_DIR,
+    ACCOUNT_KEY_FILE,
     CONF_DDNS_ENABLED,
     CONF_HTTPS_PORT,
     CONF_RESTART,
@@ -43,6 +48,7 @@ from .const import (
     SERVICE_CONFIGURE_HTTPS,
     SERVICE_DIAGNOSE,
     SERVICE_PROMOTE_HTTPS,
+    SERVICE_PURGE,
     SERVICE_PROBE,
     SERVICE_RENEW,
     SERVICE_RESTORE_CERT,
@@ -391,6 +397,47 @@ def _async_register_services(hass: HomeAssistant) -> None:
             "archive": archive,
         } | result
 
+    async def _async_handle_purge(call: ServiceCall) -> ServiceResponse:
+        """Remove every trace this integration left behind (explicit confirm)."""
+        if call.data.get("confirm") is not True:
+            return {
+                "message": "未执行：purge 是危险操作，必须显式传 confirm: true",
+                "purged": False,
+            }
+        coordinator = _first_coordinator()
+        if coordinator is None:
+            raise ValueError("还没有配置任何域名")
+        manager = coordinator.manager
+        http = await async_clear_https_config(
+            hass, manager.fullchain_path, manager.key_path
+        )
+        files = await hass.async_add_executor_job(
+            purge_certificate_files,
+            manager.fullchain_path,
+            manager.key_path,
+            os.path.join(ACCOUNT_KEY_DIR, ACCOUNT_KEY_FILE),
+            hass.config.path("ha_ssl_backups"),
+            bool(call.data.get("remove_backups", True)),
+        )
+        _LOGGER.warning("purge 已清理：%s；文件：%s", http.get("message"), files)
+        hass.bus.async_fire(
+            f"{DOMAIN}_purged", {"http": http, "files": files}
+        )
+        need_restart = bool(http.get("needs_restart"))
+        if call.data.get("restart") and need_restart:
+            hass.async_create_task(
+                hass.services.async_call(
+                    "homeassistant", "restart", {}, blocking=False
+                )
+            )
+        return {
+            "message": "已清理证书与相关文件，重启后回到纯 HTTP",
+            "purged": True,
+            "http": http,
+            "files": files,
+            "restart_triggered": bool(call.data.get("restart") and need_restart),
+        }
+
     _register(SERVICE_RENEW, _async_handle_renew, vol.Schema({}))
     _register(SERVICE_UPDATE_DDNS, _async_handle_update_ddns, vol.Schema({}))
     _register(
@@ -416,4 +463,15 @@ def _async_register_services(hass: HomeAssistant) -> None:
         SERVICE_RESTORE_CERT,
         _async_handle_restore_cert,
         vol.Schema({vol.Required("path"): cv.string}),
+    )
+    _register(
+        SERVICE_PURGE,
+        _async_handle_purge,
+        vol.Schema(
+            {
+                vol.Required("confirm"): cv.boolean,
+                vol.Optional("remove_backups", default=True): cv.boolean,
+                vol.Optional("restart", default=False): cv.boolean,
+            }
+        ),
     )
