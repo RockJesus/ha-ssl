@@ -22,7 +22,6 @@ from homeassistant.helpers.event import async_call_later
 from .cert_manager import (
     CertManager,
     async_apply_https_config,
-    async_config_uses_cert,
     async_local_tls_ready,
     async_maybe_enable_https,
     async_maybe_promote_https,
@@ -107,9 +106,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
     watch_task: asyncio.Task | None = None
-    if await async_config_uses_cert(hass, manager.fullchain_path):
-        watch_task = hass.async_create_task(_async_watch_tls())
-        entry.async_on_unload(watch_task.cancel)
+    watch_task = hass.async_create_task(_async_watch_tls())
+    entry.async_on_unload(watch_task.cancel)
 
     enabled = await async_maybe_enable_https(
         hass, manager.fullchain_path, manager.key_path
@@ -249,6 +247,17 @@ def _async_register_services(hass: HomeAssistant) -> None:
         if result.get("yaml_cleanup"):
             message = f"{message}；{result['yaml_cleanup']}"
         _LOGGER.info("配置 HTTPS：%s", message)
+        try:
+            synced = await async_sync_external_url(
+                hass,
+                manager.domain,
+                coordinator.entry.options.get(CONF_HTTPS_PORT),
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("同步 external_url 失败")
+        else:
+            if synced:
+                _LOGGER.info(synced)
         hass.bus.async_fire(
             f"{DOMAIN}_configure_https", {"message": message}
         )

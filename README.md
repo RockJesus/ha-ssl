@@ -137,6 +137,7 @@ python3 scripts/import_check.py             # 包内导入一致性
 <details open>
 <summary>v1.2.x</summary>
 
+- **v1.3.3**：网址同步改为每次启动都检查（不再依赖「HTTP 配置已经指向本证书」这个前置条件），`configure_https` 服务执行后也顺带写回 `external_url`
 - **v1.3.2**：首次配置就能开动态 DNS（凭据校验通过后多一步「记录 / 类型 / 间隔 / TTL」）；`external_url` 为空时也会自动写成 `https://<证书域名>:<端口>`，新装实例不再触发「SSL 已启用但没配网址」的修复项
 - **v1.3.1**：`external_url` 也自动对齐——签发/续期成功后改成 `https://<证书域名>:<端口>`，不再要求原主机名与证书域名一致
 - **v1.3.0**：签发/续期成功后自动把 HTTPS 配置对齐到 `/config/ssl`（不再只覆盖文件不换路径），必要时自动重启使证书生效
