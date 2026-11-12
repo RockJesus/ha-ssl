@@ -20,6 +20,7 @@ from .cert_manager import (
     CertManager,
     async_apply_https_config,
     async_sync_external_url,
+    verify_installation,
 )
 from .const import (
     ACCOUNT_KEY_DIR,
@@ -66,6 +67,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
         self.manager = manager
         self._first_run = True
         self._last_alert_day: date | None = None
+        self.last_issue_skipped: str | None = None
 
     async def _async_update_data(self) -> CertInfo:
         """Read the certificate and renew it when it is close to expiry."""
@@ -182,8 +184,35 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             return True
         return False
 
-    async def async_force_issue(self) -> CertInfo:
-        """Issue immediately (button / service)."""
+    async def async_force_issue(self, force: bool = False) -> CertInfo:
+        """Issue immediately (button / service), reusing a healthy certificate."""
+        self.last_issue_skipped = None
+        if not force:
+            current = await self.hass.async_add_executor_job(self.manager.read_cert)
+            threshold = int(
+                self.entry.options.get(CONF_RENEW_DAYS, DEFAULT_RENEW_DAYS)
+            )
+            if (
+                current.exists
+                and current.days_left is not None
+                and current.days_left > threshold
+            ):
+                verify = await self.hass.async_add_executor_job(
+                    verify_installation,
+                    self.manager.fullchain_path,
+                    self.manager.key_path,
+                )
+                wanted = {d.lower() for d in self.manager.domains}
+                covered = {d.lower() for d in current.san}
+                if not verify.get("problems") and wanted <= covered:
+                    self.last_issue_skipped = (
+                        f"证书还有 {current.days_left} 天到期，校验正常，"
+                        "本次没有重新签发（避免消耗 Let's Encrypt 额度）；"
+                        "确实需要强制重签请调用 ha_ssl.renew 并传 force: true"
+                    )
+                    _LOGGER.info(self.last_issue_skipped)
+                    self.async_set_updated_data(current)
+                    return current
         info = await self.manager.async_issue()
         if await self._async_align_https():
             self.hass.async_create_task(self._async_restart_ha())

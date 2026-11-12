@@ -1,6 +1,13 @@
 renew:
   name: 立即签发/续期
-  description: 立刻执行一次 ACME dns-01 签发，成功后把证书写入配置目录。
+  description: 立刻执行一次 ACME dns-01 签发，成功后把证书写入配置目录。默认会复用仍健康、剩余天数大于阈值的证书，避免消耗签发额度。
+  fields:
+    force:
+      name: 强制重新签发
+      description: 设为 true 时忽略「证书仍健康」判断，强制向 CA 下单（会消耗 Let's Encrypt 限流额度）。
+      default: false
+      selector:
+        boolean:
 
 configure_https:
   name: 写入 HTTPS 配置并重启

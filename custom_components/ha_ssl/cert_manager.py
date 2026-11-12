@@ -253,6 +253,14 @@ class CertManager:
             raise CertIssueError("已有一签发任务在运行，请稍后再试")
 
         async with self._lock:
+            cooldown = read_retry_after()
+            if cooldown and cooldown > datetime.now(timezone.utc):
+                local = cooldown.astimezone().strftime("%Y-%m-%d %H:%M")
+                raise CertIssueError(
+                    "Let's Encrypt 限流退避中：最早 "
+                    f"{local} 之后才能再签。当前证书仍在有效期内，"
+                    "不必重复签发；到时间后自动续期或手动签发即可。"
+                )
             domains = self.domains
             provider_key = str(self.entry.data.get(CONF_PROVIDER) or "")
             directory = (
@@ -320,12 +328,26 @@ class CertManager:
                 asyncio.TimeoutError,
             ) as err:
                 _LOGGER.exception("签发请求失败")
+                if "retry after" in str(err).lower() and "too many" in str(err).lower():
+                    match = re.search(
+                        r"retry after (\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}) UTC",
+                        str(err),
+                    )
+                    if match:
+                        try:
+                            stamp = datetime.fromisoformat(
+                                f"{match.group(1)}T{match.group(2)}"
+                            ).replace(tzinfo=timezone.utc)
+                            save_retry_after(stamp)
+                        except ValueError:
+                            _LOGGER.warning("无法解析 ACME 限流时间：%s", match.group(0))
                 message = _friendly_issue_error(err)
                 self.last_error = message
                 raise CertIssueError(message) from err
             finally:
                 await cleanup_txt()
 
+            await self.hass.async_add_executor_job(clear_retry_after)
             await self.hass.async_add_executor_job(
                 self._write_files, cert_pem, key_pem
             )
@@ -572,6 +594,49 @@ def _safe_port(parsed: Any) -> int | None:
         return parsed.port
     except ValueError:
         return None
+
+
+RETRY_AFTER_FILE = "retry_after.json"
+
+
+def _retry_after_path() -> pathlib.Path:
+    return pathlib.Path(ACCOUNT_KEY_DIR) / RETRY_AFTER_FILE
+
+
+def read_retry_after() -> datetime | None:
+    """Return the persisted ACME retry-after timestamp, if still in the future."""
+    path = _retry_after_path()
+    if not path.exists():
+        return None
+    try:
+        stamp = json.loads(path.read_text(encoding="utf-8")).get("retry_after")
+        value = datetime.fromisoformat(stamp)
+    except (OSError, ValueError, TypeError):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def save_retry_after(value: datetime) -> None:
+    """Persist a cooldown so a restart will not hit the ACME limit again."""
+    path = _retry_after_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"retry_after": value.astimezone(timezone.utc).isoformat()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        _LOGGER.exception("写入限流退避时间失败")
+
+
+def clear_retry_after() -> None:
+    """Remove the cooldown after a successful issuance."""
+    try:
+        _retry_after_path().unlink(missing_ok=True)
+    except OSError:
+        _LOGGER.exception("清除限流退避时间失败")
 
 
 def _friendly_issue_error(err: Exception) -> str:

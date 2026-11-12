@@ -47,6 +47,17 @@ class IssueButton(_CertBaseEntity, ButtonEntity):
             await self.coordinator.async_force_issue()
         except CertIssueError as err:
             raise HomeAssistantError(f"签发失败：{err}") from err
+        if reason := self.coordinator.last_issue_skipped:
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL：无需重新签发",
+                    "notification_id": "ha_ssl_issue_skipped",
+                    "message": reason,
+                },
+                blocking=False,
+            )
 
 
 class SyncHttpsButton(_CertBaseEntity, ButtonEntity):

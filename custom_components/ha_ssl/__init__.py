@@ -279,10 +279,19 @@ def _async_register_services(hass: HomeAssistant) -> None:
             return {"message": "已有一签发任务在运行"}
         await hass.async_add_executor_job(clear_purge_marker)
         try:
-            info = await coordinator.async_force_issue()
+            info = await coordinator.async_force_issue(
+                force=bool(call.data.get("force", False))
+            )
         except Exception as err:  # noqa: BLE001 - surface the reason to the caller
             _LOGGER.error("手动签发失败：%s", err)
             return {"message": f"签发失败：{err}"}
+        if coordinator.last_issue_skipped:
+            return {
+                "message": coordinator.last_issue_skipped,
+                "skipped": True,
+                "valid_to": info.valid_to.isoformat() if info.valid_to else None,
+                "days_left": info.days_left,
+            }
         return {
             "message": "签发成功"
             if info.exists
@@ -538,7 +547,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
             "restart_triggered": bool(call.data.get("restart") and need_restart),
         }
 
-    _register(SERVICE_RENEW, _async_handle_renew, vol.Schema({}))
+    _register(
+        SERVICE_RENEW,
+        _async_handle_renew,
+        vol.Schema({vol.Optional("force", default=False): cv.boolean}),
+    )
     _register(SERVICE_UPDATE_DDNS, _async_handle_update_ddns, vol.Schema({}))
     _register(
         SERVICE_PROBE,
