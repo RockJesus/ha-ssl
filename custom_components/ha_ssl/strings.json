@@ -33,12 +33,32 @@
           "dnspod_token": "创建 Token 时显示的密钥串",
           "cloudflare_api_token": "需要 Zone.DNS 的编辑权限"
         }
+      },
+      "ddns": {
+        "title": "动态 DNS（可选）",
+        "description": "需要让域名始终指向家里的公网 IP，就在这里开启。集成会每隔几分钟查一次出口 IP，变了就改 {domain} 的解析记录。\n\n不需要就保持关闭，之后随时可以在「配置」里再打开。",
+        "data": {
+          "ddns_enabled": "启用动态 DNS",
+          "ddns_record": "要维护的解析记录",
+          "ddns_record_types": "记录类型",
+          "ddns_interval": "检查间隔",
+          "ddns_ttl": "解析 TTL",
+          "ddns_notify": "地址变化时发通知"
+        },
+        "data_description": {
+          "ddns_record": "通常就是证书域名本身；也可以填子域名，如 home.example.com",
+          "ddns_record_types": "一般选 A（IPv4）。家宽没有固定 IPv4 才考虑 AAAA",
+          "ddns_interval": "多久查一次公网 IP，默认 5 分钟",
+          "ddns_ttl": "写进解析记录的 TTL，默认 600 秒",
+          "ddns_notify": "IP 变化或写记录失败时发一条持久通知"
+        }
       }
     },
     "error": {
       "invalid_auth": "凭据无效，或该账号下没有这个域名。常见原因：AccessKey 已停用、子账号没有 DNS 解析权限、域名不在这个账号下",
       "cannot_connect": "连不上服务商接口。检查 HA 主机能否访问外网，或稍后重试",
-      "domain_required": "无法从 Home Assistant 地址自动识别域名，请手动填写证书要绑定的域名"
+      "domain_required": "无法从 Home Assistant 地址自动识别域名，请手动填写证书要绑定的域名",
+      "invalid_record": "解析记录不是合法的域名"
     },
     "abort": {
       "already_configured": "这个域名已经配置过了，直接用它现有的证书即可"

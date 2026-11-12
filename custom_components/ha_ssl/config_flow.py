@@ -215,7 +215,8 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(domain)
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(title=domain, data=data)
+                self._entry_data = data
+                return await self.async_step_ddns()
 
         schema: dict[Any, Any] = {
             vol.Required(field): str for field in CREDENTIAL_FIELDS[provider]
@@ -228,6 +229,95 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
                 "provider": PROVIDER_CLASSES[provider],
                 "provider_help": PROVIDER_HELP.get(provider, ""),
             },
+        )
+
+    async def async_step_ddns(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Offer the dynamic DNS setup right after the credentials are verified."""
+        data: dict[str, Any] | None = getattr(self, "_entry_data", None)
+        if not data:
+            return await self.async_step_user()
+        domain = str(data[CONF_DOMAIN])
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            options: dict[str, Any] = {}
+            if user_input.get(CONF_DDNS_ENABLED, False):
+                record = str(user_input.get(CONF_DDNS_RECORD) or domain).strip()
+                if not is_hostname(record):
+                    errors["base"] = "invalid_record"
+                else:
+                    try:
+                        interval = int(
+                            user_input.get(CONF_DDNS_INTERVAL, DEFAULT_DDNS_INTERVAL)
+                        )
+                    except (TypeError, ValueError):
+                        interval = DEFAULT_DDNS_INTERVAL
+                    options = {
+                        CONF_DDNS_ENABLED: True,
+                        CONF_DDNS_RECORD: record,
+                        CONF_DDNS_RECORD_TYPES: normalize_record_types(
+                            user_input.get(CONF_DDNS_RECORD_TYPES)
+                        ),
+                        CONF_DDNS_INTERVAL: max(
+                            DDNS_MIN_INTERVAL, min(DDNS_MAX_INTERVAL, interval)
+                        ),
+                        CONF_DDNS_TTL: normalize_ttl(
+                            user_input.get(CONF_DDNS_TTL, 600)
+                        ),
+                        CONF_DDNS_NOTIFY: bool(
+                            user_input.get(CONF_DDNS_NOTIFY, DEFAULT_DDNS_NOTIFY)
+                        ),
+                    }
+            if not errors:
+                return self.async_create_entry(
+                    title=domain, data=data, options=options
+                )
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_DDNS_ENABLED, default=False): bool,
+                vol.Optional(CONF_DDNS_RECORD, default=domain): str,
+                vol.Optional(
+                    CONF_DDNS_RECORD_TYPES, default=list(DEFAULT_DDNS_RECORD_TYPES)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=["A", "AAAA", "CNAME", "TXT"],
+                        multiple=True,
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+                vol.Optional(
+                    CONF_DDNS_INTERVAL, default=DEFAULT_DDNS_INTERVAL
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=DDNS_MIN_INTERVAL,
+                        max=DDNS_MAX_INTERVAL,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="分钟",
+                    )
+                ),
+                vol.Optional(CONF_DDNS_TTL, default=600): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=DDNS_MIN_TTL,
+                        max=DDNS_MAX_TTL,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="秒",
+                    )
+                ),
+                vol.Optional(
+                    CONF_DDNS_NOTIFY, default=DEFAULT_DDNS_NOTIFY
+                ): bool,
+            }
+        )
+        return self.async_show_form(
+            step_id="ddns",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"domain": domain},
         )
 
     @staticmethod

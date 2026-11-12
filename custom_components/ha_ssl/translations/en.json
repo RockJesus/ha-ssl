@@ -33,12 +33,32 @@
           "dnspod_token": "Secret string shown when the token is created",
           "cloudflare_api_token": "Requires Zone.DNS edit permission"
         }
+      },
+      "ddns": {
+        "title": "Dynamic DNS (optional)",
+        "description": "Turn this on if the domain should always follow your home's public IP. The integration checks the egress address every few minutes and updates the records for {domain} when it moves.\n\nLeave it off to skip; you can enable it later from Configure.",
+        "data": {
+          "ddns_enabled": "Enable dynamic DNS",
+          "ddns_record": "Record to maintain",
+          "ddns_record_types": "Record types",
+          "ddns_interval": "Check interval",
+          "ddns_ttl": "Record TTL",
+          "ddns_notify": "Notify on address change"
+        },
+        "data_description": {
+          "ddns_record": "Usually the certificate domain itself, or a subdomain such as home.example.com",
+          "ddns_record_types": "A (IPv4) is the usual choice; AAAA only when the line has a fixed IPv6",
+          "ddns_interval": "How often to look up the public IP, default 5 minutes",
+          "ddns_ttl": "TTL written into the record, default 600 seconds",
+          "ddns_notify": "Send a persistent notification when the IP changes or a record write fails"
+        }
       }
     },
     "error": {
       "invalid_auth": "Invalid credentials, or this account does not own the domain. Common causes: disabled AccessKey, sub-account without DNS permissions, domain under another account",
       "cannot_connect": "Cannot reach the provider API. Check that the Home Assistant host has outbound network access, or retry later",
-      "domain_required": "Could not derive a domain from the Home Assistant URL, please enter the domain to bind the certificate to"
+      "domain_required": "Could not derive a domain from the Home Assistant URL, please enter the domain to bind the certificate to",
+      "invalid_record": "That record name is not a valid hostname"
     },
     "abort": {
       "already_configured": "This domain is already configured — its existing certificate is reused"

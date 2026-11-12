@@ -517,8 +517,15 @@ async def async_sync_external_url(
     from urllib.parse import urlparse  # noqa: PLC0415
 
     external = hass.config.external_url
+    target_port = port or 8123
     if not external:
-        return None
+        new_url = f"https://{domain.lower()}:{target_port}"
+        try:
+            await hass.config.async_update(external_url=new_url)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("写入 external_url 失败")
+            return None
+        return f"external_url 原为空，已自动设为 {new_url}"
     parsed = urlparse(external)
     target_port = port or parsed.port or 8123
     if parsed.scheme == "https" and parsed.hostname == domain.lower() and parsed.port == target_port:
