@@ -104,6 +104,7 @@ CERT_FILE_NAME = "fullchain.pem"
 KEY_FILE_NAME = "privkey.pem"
 ACCOUNT_KEY_DIR = "/config/ha_ssl"
 ACCOUNT_KEY_FILE = "account_key.pem"
+PURGE_MARKER_FILE = "purged"
 STATE_FILE = "state.json"
 
 # ACME

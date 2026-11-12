@@ -28,6 +28,7 @@ from .doh import DohResolver
 from .const import (
     ACCOUNT_KEY_DIR,
     ACCOUNT_KEY_FILE,
+    PURGE_MARKER_FILE,
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
     CERT_FILE_NAME,
@@ -582,7 +583,25 @@ def purge_certificate_files(
                 removed.append(target)
         except OSError as err:
             failed.append({"path": target, "error": str(err)})
+    try:
+        marker = pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(int(time.time())), encoding="utf-8")
+    except OSError as err:
+        failed.append({"path": "purge-marker", "error": str(err)})
     return {"removed": removed, "failed": failed}
+
+
+def clear_purge_marker() -> bool:
+    """Drop the purge marker so a re-configured instance can issue again."""
+    marker = pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE
+    try:
+        if marker.exists():
+            marker.unlink()
+            return True
+    except OSError:
+        _LOGGER.exception("清除 purge 标记失败")
+    return False
 
 
 async def async_clear_https_config(
@@ -672,6 +691,8 @@ async def async_maybe_enable_https(
     hass: HomeAssistant, fullchain: str, key: str
 ) -> str | None:
     """First-run bootstrap: point HA's HTTP config at our certificate."""
+    if (pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE).exists():
+        return None
     if not pathlib.Path(fullchain).exists() or not pathlib.Path(key).exists():
         return None
     try:

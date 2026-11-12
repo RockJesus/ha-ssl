@@ -135,6 +135,9 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Pick the provider and the certificate basics."""
+        from .cert_manager import clear_purge_marker  # noqa: PLC0415
+
+        await self.hass.async_add_executor_job(clear_purge_marker)
         guessed = _guess_domain(self.hass)
 
         if user_input is not None:

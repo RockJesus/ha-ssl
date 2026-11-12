@@ -30,6 +30,7 @@ from .cert_manager import (
     async_sync_external_url,
     async_clear_https_config,
     backup_certificate,
+    clear_purge_marker,
     purge_certificate_files,
     restore_certificate,
     verify_installation,
@@ -196,6 +197,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             raise ValueError("还没有配置任何域名")
         if coordinator.manager.busy:
             return {"message": "已有一签发任务在运行"}
+        await hass.async_add_executor_job(clear_purge_marker)
         try:
             info = await coordinator.async_force_issue()
         except Exception as err:  # noqa: BLE001 - surface the reason to the caller
