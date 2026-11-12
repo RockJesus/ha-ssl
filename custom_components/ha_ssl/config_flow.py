@@ -156,6 +156,13 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_CERT_DIR: str(user_input.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR),
                 CONF_STAGING: bool(user_input.get(CONF_STAGING, False)),
             }
+            try:
+                setup_port = int(user_input.get(CONF_HTTPS_PORT) or DEFAULT_HTTPS_PORT)
+            except (TypeError, ValueError):
+                setup_port = DEFAULT_HTTPS_PORT
+            self._setup_options = {
+                CONF_HTTPS_PORT: max(1, min(65535, setup_port))
+            }
             return await self.async_step_credentials()
 
         return self.async_show_form(
@@ -190,6 +197,15 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
                 domain_field: str,
                 vol.Optional(CONF_CERT_DIR, default=DEFAULT_CERT_DIR): str,
                 vol.Optional(CONF_STAGING, default=False): bool,
+                vol.Optional(
+                    CONF_HTTPS_PORT, default=DEFAULT_HTTPS_PORT
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=65535,
+                        mode=selector.NumberSelectorMode.BOX,
+                    )
+                ),
             }
         )
 
@@ -245,7 +261,7 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            options: dict[str, Any] = {}
+            options: dict[str, Any] = dict(getattr(self, "_setup_options", {}))
             if user_input.get(CONF_DDNS_ENABLED, False):
                 record = str(user_input.get(CONF_DDNS_RECORD) or domain).strip()
                 if not is_hostname(record):

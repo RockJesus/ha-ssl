@@ -104,9 +104,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not await async_local_tls_ready(hass):
                 await asyncio.sleep(10)
                 continue
-            result = await async_maybe_promote_https(hass, manager.fullchain_path)
-            if result:
-                _LOGGER.info(result)
+            result = await async_apply_https_config(
+                hass,
+                manager.fullchain_path,
+                manager.key_path,
+                port=entry.options.get(CONF_HTTPS_PORT),
+                tls_profile=entry.options.get(CONF_TLS_PROFILE),
+            )
             message = await async_sync_external_url(
                 hass,
                 manager.domain,
@@ -114,6 +118,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             if message:
                 _LOGGER.info(message)
+            if result.get("needs_restart"):
+                _LOGGER.info("HTTP 配置有变化（%s），3 秒后重启生效", result["message"])
+                hass.async_create_task(
+                    hass.services.async_call(
+                        "homeassistant", "restart", {}, blocking=False
+                    )
+                )
+                return
+            promoted = await async_maybe_promote_https(hass, manager.fullchain_path)
+            if promoted:
+                _LOGGER.info(promoted)
             return
 
     watch_task: asyncio.Task | None = None

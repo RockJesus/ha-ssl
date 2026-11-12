@@ -780,14 +780,23 @@ async def async_apply_https_config(
         }
 
     store = await async_get_and_load_store(hass)
+    wanted_port = _coerce_port(port) if port not in (None, "") else None
     def matches(cfg: dict[str, Any] | None) -> bool:
         return bool(cfg) and (
             cfg.get("ssl_certificate") == fullchain
             and cfg.get("ssl_key") == key
         )
-    # 只有“当前生效的配置”已经是这套证书才算无需修改；pending 匹配但
-    # stable 仍是旧证书时，必须重写 pending 并在重启后生效。
-    if matches(store.stable) and (store.pending is None or matches(store.pending)):
+    port_ok = (
+        wanted_port is None
+        or _coerce_port((store.stable or {}).get("server_port")) == wanted_port
+    )
+    # 只有“当前生效的配置”已经是这套证书（且端口也对）才算无需修改；
+    # pending 匹配但 stable 仍是旧值时，必须重写 pending 并在重启后生效。
+    if (
+        matches(store.stable)
+        and (store.pending is None or matches(store.pending))
+        and port_ok
+    ):
         cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
         return {
             "mode": "storage",
@@ -802,13 +811,14 @@ async def async_apply_https_config(
     applied: list[str] = []
     ignored: list[str] = []
     for key_name, value in (
-        ("server_port", _coerce_port(port) if port not in (None, "") else None),
+        ("server_port", wanted_port),
         ("ssl_profile", tls_profile),
     ):
         if value in (None, ""):
             continue
-        # 只改当前存储里真实存在的键，避免写入未知键导致 HTTP 集成启动失败。
-        if key_name in config:
+        # server_port 一定要写进去（用户就是要改端口）；其他键只改存储里
+        # 真实存在的，避免写入未知键导致 HTTP 集成启动失败。
+        if key_name in config or key_name == "server_port":
             config[key_name] = value
             applied.append(f"{key_name}={value}")
         else:
