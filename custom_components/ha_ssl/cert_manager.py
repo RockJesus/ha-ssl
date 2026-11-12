@@ -510,6 +510,15 @@ async def async_config_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
     return False
 
 
+def _coerce_port(port: Any, default: int = 8123) -> int:
+    """Return a clean integer port (options flow may hand us 8123.0)."""
+    try:
+        value = int(float(port))
+    except (TypeError, ValueError):
+        return default
+    return value if 0 < value < 65536 else default
+
+
 async def async_sync_external_url(
     hass: HomeAssistant, domain: str, port: int | None = None
 ) -> str | None:
@@ -517,7 +526,7 @@ async def async_sync_external_url(
     from urllib.parse import urlparse  # noqa: PLC0415
 
     external = hass.config.external_url
-    target_port = port or 8123
+    target_port = _coerce_port(port)
     if not external:
         new_url = f"https://{domain.lower()}:{target_port}"
         try:
@@ -527,8 +536,8 @@ async def async_sync_external_url(
             return None
         return f"external_url 原为空，已自动设为 {new_url}"
     parsed = urlparse(external)
-    target_port = port or parsed.port or 8123
-    if parsed.scheme == "https" and parsed.hostname == domain.lower() and parsed.port == target_port:
+    target_port = _coerce_port(port or _safe_port(parsed))
+    if parsed.scheme == "https" and parsed.hostname == domain.lower() and _safe_port(parsed) == target_port:
         return None
     new_url = parsed._replace(
         scheme="https", netloc=f"{domain.lower()}:{target_port}"
@@ -539,6 +548,14 @@ async def async_sync_external_url(
         _LOGGER.exception("更新 external_url 失败")
         return None
     return f"external_url 已切换为 {new_url}"
+
+
+def _safe_port(parsed: Any) -> int | None:
+    """urlparse().port raises on malformed values such as ``8123.0``."""
+    try:
+        return parsed.port
+    except ValueError:
+        return None
 
 
 async def async_pending_uses_cert(hass: HomeAssistant, fullchain: str) -> bool:
@@ -686,7 +703,7 @@ async def async_apply_https_config(
     applied: list[str] = []
     ignored: list[str] = []
     for key_name, value in (
-        ("server_port", port),
+        ("server_port", _coerce_port(port) if port not in (None, "") else None),
         ("ssl_profile", tls_profile),
     ):
         if value in (None, ""):

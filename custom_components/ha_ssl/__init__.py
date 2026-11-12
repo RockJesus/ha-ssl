@@ -100,7 +100,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             result = await async_maybe_promote_https(hass, manager.fullchain_path)
             if result:
                 _LOGGER.info(result)
-            message = await async_sync_external_url(hass, manager.domain)
+            message = await async_sync_external_url(
+                hass,
+                manager.domain,
+                entry.options.get(CONF_HTTPS_PORT),
+            )
             if message:
                 _LOGGER.info(message)
             return
