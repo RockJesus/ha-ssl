@@ -421,6 +421,23 @@ def _async_register_services(hass: HomeAssistant) -> None:
             hass.config.path("ha_ssl_backups"),
             bool(call.data.get("remove_backups", True)),
         )
+        synced: str | None = None
+        external = hass.config.external_url
+        if external and external.startswith("https://"):
+            from urllib.parse import urlparse  # noqa: PLC0415
+
+            parsed = urlparse(external)
+            plain = parsed._replace(
+                scheme="http",
+                netloc=f"{parsed.hostname}:{parsed.port or 8123}"
+                if parsed.port
+                else (parsed.hostname or ""),
+            ).geturl()
+            try:
+                await hass.config.async_update(external_url=plain)
+                synced = f"external_url 已改回 {plain}"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("purge 后恢复 external_url 失败")
         _LOGGER.warning("purge 已清理：%s；文件：%s", http.get("message"), files)
         hass.bus.async_fire(
             f"{DOMAIN}_purged", {"http": http, "files": files}
@@ -434,6 +451,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             )
         return {
             "message": "已清理证书与相关文件，重启后回到纯 HTTP",
+            "external_url": synced,
             "purged": True,
             "http": http,
             "files": files,
