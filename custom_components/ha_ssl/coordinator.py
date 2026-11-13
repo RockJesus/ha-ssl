@@ -30,13 +30,11 @@ from .const import (
     CONF_HTTPS_PORT,
     CONF_NOTIFY_WEBHOOK,
     CONF_RENEW_DAYS,
-    CONF_RESTART_AFTER_RENEW,
     CONF_TLS_PROFILE,
     DEFAULT_AUTO_RENEW,
     DEFAULT_EXPIRY_ALERT_DAYS,
     DEFAULT_HTTPS_PORT,
     DEFAULT_RENEW_DAYS,
-    DEFAULT_RESTART_AFTER_RENEW,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
 )
@@ -122,10 +120,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             _LOGGER.info(
                 "证书剩余 %s 天，开始自动续期（阈值 %s 天）", days_left, renew_days
             )
-            should_restart = bool(
-                options.get(CONF_RESTART_AFTER_RENEW, DEFAULT_RESTART_AFTER_RENEW)
-            )
-            return await self._async_issue_once(restart_after=should_restart)
+            return await self._async_issue_once(restart_after=False)
 
         return info
 
@@ -145,44 +140,72 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
             )
             return info
 
-        needs_restart = await self._async_align_https()
-        if restart_after or needs_restart:
-            await self._async_restart_ha()
+        await self._async_align_https()
         return info
 
-    async def _async_align_https(self) -> bool:
+    async def _async_align_https(self) -> dict[str, object]:
         """Point HA's HTTP config at our certificate after a successful issue.
 
         Renewals keep the same path, but the configured path may still point at
         someone else's files (e.g. a previous DDNS tool), so realign every time.
+        Never restarts HA: the user gets a notification with what changed.
         """
         options = self.entry.options
+        port = int(options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT) or 0) or None
         try:
             result = await async_apply_https_config(
                 self.hass,
                 self.manager.fullchain_path,
                 self.manager.key_path,
-                port=int(options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT) or 0) or None,
+                port=port,
                 tls_profile=str(options.get(CONF_TLS_PROFILE) or "") or None,
             )
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
             _LOGGER.exception("证书已签发，但写入 HTTPS 配置失败")
-            return False
+            await self._async_notify(
+                "HA SSL · HTTPS 配置写入失败",
+                f"证书已经签发，但写入 HTTP 配置失败：{err}",
+                notification_id="ha_ssl_https_failed",
+            )
+            return {"changed": False, "needs_restart": False}
+
+        if result.get("needs_restart"):
+            url = f"https://{self.manager.domain}:{port or 8123}"
+            applied = "、".join(result.get("applied") or []) or "证书路径"
+            body = (
+                f"证书已重新签发并写入 Home Assistant 的 HTTPS 配置。\n\n"
+                f"本次改动：{applied}\n"
+                f"说明：{result.get('message')}\n"
+                f"证书：`{self.manager.fullchain_path}`\n"
+                f"私钥：`{self.manager.key_path}`\n"
+                f"重启后请访问：{url}\n\n"
+                "集成不会自动重启。请到「设置 → 系统 → 右上角电源菜单 → "
+                "重启 Home Assistant」，或在开发者工具调用 `homeassistant.restart`，"
+                "让新配置生效。"
+            )
+            await self._async_notify(
+                "HA SSL · HTTPS 设置已更新，请重启",
+                body,
+                notification_id="ha_ssl_restart_needed",
+            )
+            _LOGGER.info("HTTPS 配置已对齐 /config/ssl（%s），等待用户重启", applied)
+            return {
+                "changed": True,
+                "needs_restart": True,
+                "url": url,
+                "applied": result.get("applied") or [],
+            }
+
         try:
             message = await async_sync_external_url(
-                self.hass,
-                self.manager.domain,
-                int(options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT) or 0) or None,
+                self.hass, self.manager.domain, port
             )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("更新 external_url 失败")
         else:
             if message:
                 _LOGGER.info(message)
-        if result.get("needs_restart"):
-            _LOGGER.info("HTTPS 配置已对齐 /config/ssl，重启后生效")
-            return True
-        return False
+        return {"changed": False, "needs_restart": False}
 
     async def async_force_issue(self, force: bool = False) -> CertInfo:
         """Issue immediately (button / service), reusing a healthy certificate."""
@@ -214,8 +237,7 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
                     self.async_set_updated_data(current)
                     return current
         info = await self.manager.async_issue()
-        if await self._async_align_https():
-            self.hass.async_create_task(self._async_restart_ha())
+        await self._async_align_https()
         self.async_set_updated_data(info)
         return info
 
@@ -272,11 +294,3 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
                     _LOGGER.warning("告警 Webhook 返回 HTTP %s", resp.status)
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.warning("告警 Webhook 发送失败：%s", err)
-
-    async def _async_restart_ha(self) -> None:
-        """Restart Home Assistant so the new certificate is loaded."""
-        await asyncio.sleep(3)
-        _LOGGER.info("证书已更新，重启 Home Assistant 以加载新证书")
-        await self.hass.services.async_call(
-            "homeassistant", "restart", {}, blocking=False
-        )

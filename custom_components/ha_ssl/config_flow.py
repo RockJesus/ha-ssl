@@ -41,7 +41,6 @@ from .const import (
     CONF_DOMAIN,
     CONF_PROVIDER,
     CONF_RENEW_DAYS,
-    CONF_RESTART_AFTER_RENEW,
     CONF_STAGING,
     DEFAULT_AUTO_RENEW,
     DEFAULT_CERT_DIR,
@@ -55,7 +54,6 @@ from .const import (
     DEFAULT_TLS_PROFILE,
     DDNS_MAX_TTL,
     DDNS_MIN_TTL,
-    DEFAULT_RESTART_AFTER_RENEW,
     DDNS_MAX_INTERVAL,
     DDNS_MIN_INTERVAL,
     DOMAIN,
@@ -414,12 +412,6 @@ class HaSslOptionsFlow(OptionsFlow):
                             unit_of_measurement="天",
                         )
                     ),
-                    vol.Optional(
-                        CONF_RESTART_AFTER_RENEW,
-                        default=options.get(
-                            CONF_RESTART_AFTER_RENEW, DEFAULT_RESTART_AFTER_RENEW
-                        ),
-                    ): bool,
                     vol.Optional(
                         CONF_CERT_DOMAINS,
                         default=str(

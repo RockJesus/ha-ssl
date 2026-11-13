@@ -72,7 +72,6 @@
         "data": {
           "auto_renew": "自动续期",
           "renew_days": "提前多少天续期",
-          "restart_after_renew": "续期成功后自动重启 Home Assistant",
           "ddns_enabled": "启用动态域名解析",
           "ddns_record": "要更新的域名",
           "ddns_interval": "检查间隔",
@@ -91,7 +90,6 @@
         "data_description": {
           "auto_renew": "关闭后只有点「立即签发」按钮才会续期",
           "renew_days": "剩余天数低于该值时开始续签，可选 7–89 天",
-          "restart_after_renew": "Home Assistant 只在启动时读取证书，不重启则新证书不生效；关闭后需你手动重启",
           "ddns_enabled": "定时比对公网地址与 A/AAAA 记录，变化时通过同一个 DNS 服务商接口改写记录",
           "ddns_record": "留空则使用证书域名。只能填该服务商账号下已有的域名或子域名；记录不存在时会自动创建",
           "ddns_interval": "查询公网 IP 并检查记录的间隔，默认 5 分钟",

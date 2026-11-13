@@ -72,7 +72,6 @@
         "data": {
           "auto_renew": "Automatic renewal",
           "renew_days": "Renew this many days before expiry",
-          "restart_after_renew": "Restart Home Assistant after renewal",
           "ddns_enabled": "Enable dynamic DNS",
           "ddns_record": "Record to keep updated",
           "ddns_interval": "Check interval",
@@ -91,7 +90,6 @@
         "data_description": {
           "auto_renew": "When off, renewal only happens via the issue button",
           "renew_days": "Renew when fewer days are left; 7–89",
-          "restart_after_renew": "Home Assistant reads the certificate only at startup",
           "ddns_enabled": "Compare the public address with the A/AAAA records on a schedule and rewrite them through the same DNS provider API",
           "ddns_record": "Empty means the certificate domain. Must exist in this provider account; missing records are created automatically",
           "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default",
