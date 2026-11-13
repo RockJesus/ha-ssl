@@ -350,18 +350,30 @@ def _async_register_services(hass: HomeAssistant) -> None:
             f"{DOMAIN}_configure_https", {"message": message}
         )
 
-        restart = call.data.get(CONF_RESTART, True)
         need_restart = bool(result["needs_restart"])
-        if restart and need_restart:
-            hass.async_create_task(
-                hass.services.async_call(
-                    "homeassistant", "restart", {}, blocking=False
-                )
+        if need_restart:
+            port = coordinator.entry.options.get(CONF_HTTPS_PORT, DEFAULT_HTTPS_PORT)
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL：HTTPS 设置已更新，请重启",
+                    "notification_id": "ha_ssl_restart_needed",
+                    "message": (
+                        f"{message}\n\n"
+                        f"证书：`{manager.fullchain_path}`\n"
+                        f"私钥：`{manager.key_path}`\n"
+                        f"端口：{port}\n"
+                        f"重启后请访问：https://{manager.domain}:{port}\n\n"
+                        "集成不会自动重启。请手动重启 Home Assistant 让配置生效。"
+                    ),
+                },
+                blocking=False,
             )
         return {
             "message": message,
             "mode": result["mode"],
-            "restart_triggered": bool(restart and need_restart),
+            "restart_required": need_restart,
         }
 
     async def _async_handle_promote_https(call: ServiceCall) -> ServiceResponse:
@@ -519,11 +531,20 @@ def _async_register_services(hass: HomeAssistant) -> None:
             f"{DOMAIN}_purged", {"http": http, "files": files}
         )
         need_restart = bool(http.get("needs_restart"))
-        if call.data.get("restart") and need_restart:
-            hass.async_create_task(
-                hass.services.async_call(
-                    "homeassistant", "restart", {}, blocking=False
-                )
+        if need_restart:
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL：已清理 HTTPS，请重启",
+                    "notification_id": "ha_ssl_restart_needed",
+                    "message": (
+                        "证书与 HTTPS 配置已清理，端口已改回默认，"
+                        "重启后 Home Assistant 回到纯 HTTP。\n\n"
+                        "集成不会自动重启，请手动重启让配置生效。"
+                    ),
+                },
+                blocking=False,
             )
         return {
             "message": "已清理证书与相关文件，重启后回到纯 HTTP",
@@ -531,7 +552,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
             "purged": True,
             "http": http,
             "files": files,
-            "restart_triggered": bool(call.data.get("restart") and need_restart),
+            "restart_required": need_restart,
         }
 
     _register(

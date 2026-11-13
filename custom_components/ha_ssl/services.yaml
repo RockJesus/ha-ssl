@@ -14,8 +14,8 @@ configure_https:
   description: 把 ssl_certificate / ssl_key 写入 Home Assistant 的 HTTP 配置（新版写 .storage/http，旧版写 configuration.yaml），端口与 TLS 档位取自集成选项，随后重启以生效。
   fields:
     restart:
-      name: 自动重启
-      description: 写入成功后是否立刻重启 Home Assistant。
+      name: 自动重启（已废弃）
+      description: 仅为兼容旧调用保留，已不再生效：需要重启时一律发通知由你手动重启。
       default: true
       example: true
       selector:
@@ -82,8 +82,8 @@ purge:
       selector:
         boolean:
     restart:
-      name: 自动重启
-      description: 清理完成后是否立刻重启 Home Assistant（不重启则当前 HTTPS 仍可用，直到下次重启）。
+      name: 自动重启（已废弃）
+      description: 仅为兼容旧调用保留，已不再生效：需要重启时一律发通知由你手动重启。
       default: false
       selector:
         boolean:
