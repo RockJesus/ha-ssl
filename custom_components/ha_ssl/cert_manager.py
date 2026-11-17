@@ -253,7 +253,7 @@ class CertManager:
             raise CertIssueError("已有一签发任务在运行，请稍后再试")
 
         async with self._lock:
-            cooldown = read_retry_after()
+            cooldown = await self.hass.async_add_executor_job(read_retry_after)
             if cooldown and cooldown > datetime.now(timezone.utc):
                 local = cooldown.astimezone().strftime("%Y-%m-%d %H:%M")
                 raise CertIssueError(
@@ -338,7 +338,9 @@ class CertManager:
                             stamp = datetime.fromisoformat(
                                 f"{match.group(1)}T{match.group(2)}"
                             ).replace(tzinfo=timezone.utc)
-                            save_retry_after(stamp)
+                            await self.hass.async_add_executor_job(
+                                save_retry_after, stamp
+                            )
                         except ValueError:
                             _LOGGER.warning("无法解析 ACME 限流时间：%s", match.group(0))
                 message = _friendly_issue_error(err)
@@ -823,13 +825,33 @@ async def async_maybe_promote_https(
     return "本机 TLS 已确认可用，已自动固化为正式 HTTP 配置"
 
 
+def _bootstrap_guard(fullchain: str, key: str) -> tuple[bool, bool]:
+    """Sync on-disk guard check; run in an executor job."""
+    purged = (pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE).exists()
+    files_exist = (
+        pathlib.Path(fullchain).exists() and pathlib.Path(key).exists()
+    )
+    return purged, files_exist
+
+
+def _read_bootstrap_marker(path: pathlib.Path) -> dict:
+    """Read the bootstrap marker file; run in an executor job."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
 async def async_maybe_enable_https(
     hass: HomeAssistant, fullchain: str, key: str
 ) -> str | None:
     """First-run bootstrap: point HA's HTTP config at our certificate."""
-    if (pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE).exists():
-        return None
-    if not pathlib.Path(fullchain).exists() or not pathlib.Path(key).exists():
+    purged, files_exist = await hass.async_add_executor_job(
+        _bootstrap_guard, fullchain, key
+    )
+    if purged or not files_exist:
         return None
     try:
         from homeassistant.components.http.config import (  # noqa: PLC0415
@@ -850,13 +872,11 @@ async def async_maybe_enable_https(
 
     fingerprint = await hass.async_add_executor_job(_cert_fingerprint, fullchain)
     marker = pathlib.Path(ACCOUNT_KEY_DIR) / HTTPS_BOOTSTRAP_FILE
-    if marker.exists():
-        try:
-            previous = json.loads(marker.read_text(encoding="utf-8"))
-        except ValueError:
-            previous = {}
-        if previous.get("fingerprint") == fingerprint:
-            return None
+    previous = await hass.async_add_executor_job(
+        _read_bootstrap_marker, marker
+    )
+    if previous.get("fingerprint") == fingerprint:
+        return None
 
     await hass.async_add_executor_job(_validate_cert_pair, fullchain, key)
 
