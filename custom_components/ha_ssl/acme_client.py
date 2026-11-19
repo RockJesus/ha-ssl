@@ -94,6 +94,12 @@ def build_csr_der(domains: str | list[str], key: EllipticCurvePrivateKey) -> byt
     return csr.public_bytes(serialization.Encoding.DER)
 
 
+def _build_key_and_csr(domains: list[str]) -> tuple[bytes, bytes]:
+    """Create the leaf key and its CSR in one blocking call (executor thread)."""
+    key, key_pem = generate_certificate_key()
+    return key_pem, build_csr_der(domains, key)
+
+
 class AcmeClient:
     """Tiny ACME v2 client covering the dns-01 flow only."""
 
@@ -370,8 +376,11 @@ class AcmeClient:
         finally:
             await cleanup_txt()
 
-        key, key_pem = generate_certificate_key()
-        csr_der = build_csr_der(names, key)
+        # EC key generation and CSR signing are CPU work: keep them off the
+        # event loop, like the rest of the blocking crypto helpers.
+        key_pem, csr_der = await asyncio.get_running_loop().run_in_executor(
+            None, _build_key_and_csr, names
+        )
 
         for attempt in range(5):
             try:

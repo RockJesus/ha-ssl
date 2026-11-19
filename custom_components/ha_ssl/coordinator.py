@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import pathlib
 from datetime import date
 
 import aiohttp
@@ -23,8 +22,6 @@ from .cert_manager import (
     verify_installation,
 )
 from .const import (
-    ACCOUNT_KEY_DIR,
-    PURGE_MARKER_FILE,
     CONF_AUTO_RENEW,
     CONF_EXPIRY_ALERT_DAYS,
     CONF_HTTPS_PORT,
@@ -69,9 +66,10 @@ class AcmeCertCoordinator(DataUpdateCoordinator[CertInfo]):
 
     async def _async_update_data(self) -> CertInfo:
         """Read the certificate and renew it when it is close to expiry."""
-        info = await self.hass.async_add_executor_job(self.manager.read_cert)
-
-        if (pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE).exists():
+        info, purged = await self.hass.async_add_executor_job(
+            self.manager.read_cert_state
+        )
+        if purged:
             # purge 之后不再自动签发/续期，等用户重新配置。
             return info
 

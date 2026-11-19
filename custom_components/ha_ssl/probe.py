@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import time
-
 import json
 import pathlib
+import time
 
 import aiohttp
 

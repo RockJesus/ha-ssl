@@ -8,7 +8,6 @@ import logging
 import os
 import pathlib
 import re
-import shutil
 import ssl
 import time
 from dataclasses import dataclass
@@ -18,37 +17,35 @@ from typing import Any
 import aiohttp
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .acme_client import AcmeClient, AcmeError, load_or_create_account_key
-from .doh import DohResolver
 from .const import (
     ACCOUNT_KEY_DIR,
     ACCOUNT_KEY_FILE,
-    PURGE_MARKER_FILE,
     ACME_DIRECTORY_PRODUCTION,
     ACME_DIRECTORY_STAGING,
+    BACKUP_FILE_PREFIX,
     CERT_FILE_NAME,
     CONF_CERT_DIR,
     CONF_CERT_DOMAINS,
     CONF_DOMAIN,
     CONF_PROVIDER,
     CONF_STAGING,
-    FALLBACK_CERT_DIR,
     DEFAULT_CERT_DIR,
     DEFAULT_WAIT_TIMEOUT,
     DOH_RESOLVERS,
+    FALLBACK_CERT_DIR,
     KEY_FILE_NAME,
+    PURGE_MARKER_FILE,
     STATE_FILE,
 )
+from .doh import DohResolver
 from .providers import DnsProviderError, async_create_provider
 
 _LOGGER = logging.getLogger(__name__)
-
-CONFIG_FILE = "/config/configuration.yaml"
 
 
 class CertIssueError(Exception):
@@ -146,16 +143,29 @@ class CertManager:
 
     @property
     def cert_dir(self) -> str:
-        """Directory holding the certificate files."""
+        """Directory holding the certificate files.
+
+        Pure in-memory lookup: the real directory is resolved once at setup with
+        :meth:`resolve_cert_dir`, so no filesystem call happens on the event
+        loop when this is read from async code.
+        """
+        if self._writable_cert_dir is not None:
+            return self._writable_cert_dir
+        return str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
+
+    def resolve_cert_dir(self) -> str:
+        """Resolve and cache the certificate directory (blocking, use executor)."""
         if self._writable_cert_dir is not None:
             return self._writable_cert_dir
         configured = str(self.entry.data.get(CONF_CERT_DIR) or DEFAULT_CERT_DIR)
+        resolved = configured
         if configured != FALLBACK_CERT_DIR:
             configured_file = pathlib.Path(configured) / CERT_FILE_NAME
             fallback_file = pathlib.Path(FALLBACK_CERT_DIR) / CERT_FILE_NAME
             if not configured_file.exists() and fallback_file.exists():
-                return FALLBACK_CERT_DIR
-        return configured
+                resolved = FALLBACK_CERT_DIR
+        self._writable_cert_dir = resolved
+        return resolved
 
     @property
     def fullchain_path(self) -> str:
@@ -230,6 +240,15 @@ class CertManager:
         info.last_error = self.last_error
         info.last_issued_at = self.last_issued_at
         return info
+
+    def read_cert_state(self) -> tuple[CertInfo, bool]:
+        """Read the certificate and the purge marker in one executor job.
+
+        Both touches the filesystem, so async callers must hand this to
+        ``hass.async_add_executor_job`` instead of checking the marker inline.
+        """
+        purged = (pathlib.Path(ACCOUNT_KEY_DIR) / PURGE_MARKER_FILE).exists()
+        return self.read_cert(), purged
 
     # --------------------------------------------------------------- issuing
 
@@ -466,34 +485,6 @@ def _validate_cert_pair(fullchain: str, key: str) -> None:
         raise ValueError(f"证书或私钥无法加载：{err}") from err
 
 
-def _strip_yaml_ssl(fullchain: str, key: str, config_file: str = CONFIG_FILE) -> str:
-    """Remove the obsolete ssl lines from configuration.yaml (HA 2026.11+)."""
-    path = pathlib.Path(config_file)
-    if not path.exists():
-        return ""
-    text = path.read_text(encoding="utf-8")
-    if "ssl_certificate" not in text:
-        return ""
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    backup = path.with_suffix(path.suffix + f".bak.{stamp}")
-    shutil.copy2(path, backup)
-    lines = [
-        line
-        for line in text.splitlines()
-        if not (
-            line.strip().startswith("ssl_certificate:")
-            or line.strip().startswith("ssl_key:")
-        )
-    ]
-    text = "\n".join(lines).rstrip() + "\n"
-    # Drop a http: block that became empty.
-    text = re.sub(r"^http:\s*\n(?=\S|\Z)", "", text, count=1, flags=re.MULTILINE)
-    if text.strip() and not text.endswith("\n"):
-        text += "\n"
-    path.write_text(text, encoding="utf-8")
-    return f"已清理 configuration.yaml 里已失效的 ssl 两行（备份 {backup.name}）"
-
-
 HTTPS_BOOTSTRAP_FILE = "https_bootstrap.json"
 
 
@@ -724,14 +715,15 @@ async def async_clear_https_config(
             async_get_and_load_store,
         )
     except ImportError:
-        cleanup = await hass.async_add_executor_job(
-            _strip_yaml_ssl, fullchain, key
-        )
+        await async_notify_manual_yaml(hass, fullchain, key, remove=True)
         return {
-            "mode": "yaml",
-            "changed": bool(cleanup),
-            "message": cleanup or "configuration.yaml 里没有本集成的证书配置",
-            "needs_restart": bool(cleanup),
+            "mode": "manual",
+            "changed": False,
+            "message": (
+                "当前 Home Assistant 版本需要手动把 configuration.yaml 里的 "
+                "ssl_certificate / ssl_key 两行删掉，已发出通知"
+            ),
+            "needs_restart": False,
         }
 
     store = await async_get_and_load_store(hass)
@@ -905,6 +897,42 @@ async def async_maybe_enable_https(
     return "已把证书写入 HTTP 配置（待重启生效），重启后会自动确认"
 
 
+async def async_notify_manual_yaml(
+    hass: HomeAssistant, fullchain: str, key: str, remove: bool = False
+) -> None:
+    """Ask the user to edit configuration.yaml themselves on older HA versions.
+
+    This integration never rewrites the user's YAML; it only shows the exact
+    two lines, like the Home Assistant documentation does.
+    """
+    lines = f"http:\n  ssl_certificate: {fullchain}\n  ssl_key: {key}"
+    if remove:
+        title = "HA SSL：请手动删除 configuration.yaml 里的证书配置"
+        message = (
+            "当前 Home Assistant 版本没有 HTTP 配置存储，集成不会改动你的 "
+            "configuration.yaml。请自己把下面两行删掉：\n\n"
+            f"```yaml\n{lines}\n```\n\n改完需要重启 Home Assistant 才生效。"
+        )
+    else:
+        title = "HA SSL：请手动把证书写入 configuration.yaml"
+        message = (
+            "当前 Home Assistant 版本没有 HTTP 配置存储，集成不会改动你的 "
+            "configuration.yaml。请自己在 `http:` 段里加上下面两行：\n\n"
+            f"```yaml\n{lines}\n```\n\n改完需要重启 Home Assistant 才生效，"
+            "重启后请改用 https 访问。"
+        )
+    await hass.services.async_call(
+        "persistent_notification",
+        "create",
+        {
+            "title": title,
+            "notification_id": "ha_ssl_manual_yaml",
+            "message": message,
+        },
+        blocking=False,
+    )
+
+
 async def async_apply_https_config(
     hass: HomeAssistant,
     fullchain: str,
@@ -926,13 +954,16 @@ async def async_apply_https_config(
             async_get_and_load_store,
         )
     except ImportError:
-        message = await hass.async_add_executor_job(
-            apply_http_config, fullchain, key
-        )
+        # 旧版本没有 HTTP 配置存储，集成不再改写用户的 configuration.yaml，
+        # 改为发持久通知把两行示例给用户，由用户自己加。
+        await async_notify_manual_yaml(hass, fullchain, key)
         return {
-            "mode": "yaml",
-            "message": message,
-            "needs_restart": "无需修改" not in message,
+            "mode": "manual",
+            "message": (
+                "当前 Home Assistant 版本需要手动修改 configuration.yaml，"
+                "已发出通知列出需要添加的两行"
+            ),
+            "needs_restart": False,
         }
 
     store = await async_get_and_load_store(hass)
@@ -954,11 +985,9 @@ async def async_apply_https_config(
         and (store.pending is None or matches(store.pending))
         and port_ok
     ):
-        cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
         return {
             "mode": "storage",
-            "message": "HTTP 配置里已是这套证书，无需修改"
-            + (f"；{cleanup}" if cleanup else ""),
+            "message": "HTTP 配置里已是这套证书，无需修改",
             "needs_restart": False,
         }
 
@@ -981,7 +1010,6 @@ async def async_apply_https_config(
         else:
             ignored.append(key_name)
     await store.async_set_pending(config)
-    cleanup = await hass.async_add_executor_job(_strip_yaml_ssl, fullchain, key)
     message = (
         "已写入 HA 的 HTTP 配置存储（重启后生效；重启后请在 5 分钟内确认可访问并固化，否则会自动回退）"
     )
@@ -993,7 +1021,6 @@ async def async_apply_https_config(
         "mode": "storage",
         "message": message,
         "needs_restart": True,
-        "yaml_cleanup": cleanup,
         "applied": applied,
         "ignored": ignored,
     }
@@ -1013,42 +1040,6 @@ async def async_promote_https(hass: HomeAssistant) -> str:
         return "没有待确认的 HTTP 配置（当前已是固化状态）"
     await store.async_promote_pending()
     return "已固化为正式 HTTP 配置，自动回退已取消"
-
-def apply_http_config(fullchain: str, key: str, config_file: str = CONFIG_FILE) -> str:
-    """Insert the ssl_certificate / ssl_key lines into configuration.yaml."""
-    path = pathlib.Path(config_file)
-    if not path.exists():
-        return f"找不到配置文件：{config_file}"
-
-    text = path.read_text(encoding="utf-8")
-    if "ssl_certificate" in text:
-        return "configuration.yaml 里已经存在 ssl_certificate，无需修改"
-
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    backup = path.with_suffix(path.suffix + f".bak.{stamp}")
-    shutil.copy2(path, backup)
-
-    lines = ["  ssl_certificate: " + fullchain, "  ssl_key: " + key]
-
-    if re.search(r"^http:\s*$", text, flags=re.MULTILINE):
-        text = re.sub(
-            r"(^http:\s*$)",
-            lambda match: match.group(1) + "\n" + "\n".join(lines),
-            text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        status = f"已在现有 http: 段里插入证书配置（备份 {backup.name}）"
-    else:
-        block = "\nhttp:\n" + "\n".join(lines) + "\n"
-        if not text.endswith("\n"):
-            text += "\n"
-        text += block
-        status = f"已追加 http: 段（备份 {backup.name}）"
-
-    path.write_text(text, encoding="utf-8")
-    return status
-
 
 def _load_chain(fullchain: str) -> list[x509.Certificate]:
     """Parse every certificate in a PEM chain."""
@@ -1132,8 +1123,6 @@ def backup_certificate(
 ) -> str:
     """Write a zip backup of the certificate pair and return its path."""
     import zipfile  # noqa: PLC0415
-
-    from .const import BACKUP_FILE_PREFIX  # noqa: PLC0415
 
     pathlib.Path(target_dir).mkdir(parents=True, exist_ok=True)
     archive = os.path.join(target_dir, f"{BACKUP_FILE_PREFIX}_{stamp}.zip")

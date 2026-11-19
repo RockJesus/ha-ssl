@@ -18,6 +18,7 @@ from homeassistant.core import (
 )
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.service import async_register_admin_service
 
 from .cert_manager import (
     CertManager,
@@ -74,6 +75,9 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one ACME certificate entry."""
     manager = CertManager(hass, entry)
+    # 证书目录只在启动时解析一次（含磁盘探测），之后属性读取纯内存，
+    # 事件循环上的异步代码不会再触发 .exists()。
+    await hass.async_add_executor_job(manager.resolve_cert_dir)
     coordinator = AcmeCertCoordinator(hass, entry, manager)
 
     await coordinator.async_config_entry_first_refresh()
@@ -332,8 +336,6 @@ def _async_register_services(hass: HomeAssistant) -> None:
             tls_profile=coordinator.entry.options.get(CONF_TLS_PROFILE),
         )
         message = str(result["message"])
-        if result.get("yaml_cleanup"):
-            message = f"{message}；{result['yaml_cleanup']}"
         _LOGGER.info("配置 HTTPS：%s", message)
         try:
             synced = await async_sync_external_url(
@@ -400,9 +402,29 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _LOGGER.info("手动更新 DDNS：%s", message)
         return {"message": message, **result}
 
-    def _register(name, handler, schema, response=SupportsResponse.OPTIONAL) -> None:
-        """Register one service, skipping it if it already exists."""
+    def _register(
+        name,
+        handler,
+        schema,
+        response=SupportsResponse.OPTIONAL,
+        admin=False,
+    ) -> None:
+        """Register one service, skipping it if it already exists.
+
+        Services that touch the HTTP config, the private key or the filesystem
+        are admin-only, so a non-admin user cannot call them.
+        """
         if hass.services.has_service(DOMAIN, name):
+            return
+        if admin:
+            async_register_admin_service(
+                hass,
+                DOMAIN,
+                name,
+                handler,
+                schema=schema,
+                supports_response=response,
+            )
             return
         hass.services.async_register(
             DOMAIN,
@@ -411,6 +433,21 @@ def _async_register_services(hass: HomeAssistant) -> None:
             schema=schema,
             supports_response=response,
         )
+
+    def _check_path(raw: str) -> str:
+        """Only accept paths HA allows, and never the publicly served www dir."""
+        path = os.path.realpath(str(raw))
+        if not hass.config.is_allowed_path(path):
+            raise ValueError(
+                f"路径不在允许范围内：{raw}（需要的目录请加入 allowlist_external_dirs）"
+            )
+        public = os.path.realpath(hass.config.path("www"))
+        if path == public or path.startswith(public + os.sep):
+            raise ValueError(
+                "不能使用 www 目录：Home Assistant 会把 /local/ 下的文件"
+                "在不需要认证的情况下提供下载，私钥会泄露"
+            )
+        return path
 
     async def _async_handle_diagnose(call: ServiceCall) -> ServiceResponse:
         """Report what this host can reach and what the certificate looks like."""
@@ -464,7 +501,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
         if coordinator is None:
             raise ValueError("还没有配置任何域名")
         manager = coordinator.manager
-        target = str(call.data.get("path") or hass.config.path("ha_ssl_backups"))
+        target = _check_path(
+            call.data.get("path") or hass.config.path("ha_ssl_backups")
+        )
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
         archive = await hass.async_add_executor_job(
             backup_certificate, manager.fullchain_path, manager.key_path, target, stamp
@@ -477,7 +516,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
         if coordinator is None:
             raise ValueError("还没有配置任何域名")
         manager = coordinator.manager
-        archive = str(call.data["path"])
+        archive = _check_path(call.data["path"])
         result = await hass.async_add_executor_job(
             restore_certificate, archive, manager.fullchain_path, manager.key_path
         )
@@ -566,24 +605,33 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _async_handle_probe,
         vol.Schema({}),
         SupportsResponse.ONLY,
+        admin=True,
     )
     _register(
         SERVICE_CONFIGURE_HTTPS,
         _async_handle_configure_https,
         vol.Schema({vol.Optional(CONF_RESTART, default=True): cv.boolean}),
+        admin=True,
     )
-    _register(SERVICE_PROMOTE_HTTPS, _async_handle_promote_https, vol.Schema({}))
-    _register(SERVICE_DIAGNOSE, _async_handle_diagnose, vol.Schema({}))
+    _register(
+        SERVICE_PROMOTE_HTTPS,
+        _async_handle_promote_https,
+        vol.Schema({}),
+        admin=True,
+    )
+    _register(SERVICE_DIAGNOSE, _async_handle_diagnose, vol.Schema({}), admin=True)
     _register(SERVICE_VERIFY_CERT, _async_handle_verify_cert, vol.Schema({}))
     _register(
         SERVICE_BACKUP_CERT,
         _async_handle_backup_cert,
         vol.Schema({vol.Optional("path"): cv.string}),
+        admin=True,
     )
     _register(
         SERVICE_RESTORE_CERT,
         _async_handle_restore_cert,
         vol.Schema({vol.Required("path"): cv.string}),
+        admin=True,
     )
     _register(
         SERVICE_PURGE,
@@ -595,4 +643,5 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Optional("restart", default=False): cv.boolean,
             }
         ),
+        admin=True,
     )
