@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "配置 HA SSL",
-        "description": "选一个 DNS 服务商、确认域名即可，剩下的全自动：签发证书 → 写入 Home Assistant 的 HTTPS 配置 → 自动重启生效 → 到期前自动续签。\n\n**域名**：默认取 Home Assistant 自己的地址，一般不用改；无法自动识别时才需要填写。\n**凭据**：只保存在本地配置里，下一步再填。建议用只有 DNS 解析权限的子账号或最小权限令牌。\n\n当前签发环境：{production}（测试环境：{staging}）",
+        "description": "选一个 DNS 服务商、确认域名即可，剩下的全自动：签发证书 → 写入 Home Assistant 的 HTTPS 配置 → 发通知由你重启生效 → 到期前自动续签。\n\n**域名**：默认取 Home Assistant 自己的地址，一般不用改；无法自动识别时才需要填写。\n**凭据**：只保存在本地配置里，下一步再填。建议用只有 DNS 解析权限的子账号或最小权限令牌。\n\n当前签发环境：{production}（测试环境：{staging}）",
         "data": {
           "provider": "DNS 服务商",
           "domain": "证书域名",
@@ -68,7 +68,7 @@
     "step": {
       "init": {
         "title": "续期与动态域名",
-        "description": "证书默认提前 30 天自动续签，续签成功后重启一次以加载新证书。\n\n**证书**：可填多个域名（逗号分隔）或泛域名；到期、签发失败会发通知，可另配 Webhook。\n\n**动态域名（DDNS）**：在下面的记录清单里每行写一条「名称 | 类型 | 值」，可同时维护多条 A / AAAA / CNAME / TXT 记录，值填 auto 表示跟随本机公网地址。只改 DNS 记录，不参与证书签发。",
+        "description": "证书默认提前 30 天自动续签，续签成功后发通知，由你自己决定何时重启加载新证书（集成不会自动重启）。\n\n**证书**：可填多个域名（逗号分隔）或泛域名；到期、签发失败会发通知，可另配 Webhook。\n\n**动态域名（DDNS）**：在下面的记录清单里每行写一条「名称 | 类型 | 值」，可同时维护多条 A / AAAA / CNAME / TXT 记录，值填 auto 表示跟随本机公网地址。只改 DNS 记录，不参与证书签发。",
         "data": {
           "auto_renew": "自动续期",
           "renew_days": "提前多少天续期",
@@ -158,12 +158,12 @@
       "description": "立刻执行一次 ACME dns-01 签发，成功后把证书写入配置目录。"
     },
     "configure_https": {
-      "name": "写入 HTTPS 配置并重启",
-      "description": "把 ssl_certificate / ssl_key 写入当前 HA 版本使用的 HTTP 配置（2026.11+ 走 .storage/http 的待确认配置，旧版本改写 configuration.yaml 并自动备份），随后重启使 HTTPS 生效。",
+      "name": "写入 HTTPS 配置",
+      "description": "把 ssl_certificate / ssl_key 写入当前 HA 版本使用的 HTTP 配置（2026.11+ 走 .storage/http 的待确认配置；没有该存储的旧版本只发通知，列出你要自己加进 configuration.yaml 的两行，集成不改写用户 YAML），随后发通知由你重启使 HTTPS 生效。管理员服务。",
       "fields": {
         "restart": {
-          "name": "自动重启",
-          "description": "写入成功后是否立刻重启 Home Assistant。"
+          "name": "自动重启（已废弃）",
+          "description": "仅为兼容旧调用保留，已不再生效：需要重启时一律发通知由你手动重启。"
         }
       }
     },

@@ -10,8 +10,8 @@ renew:
         boolean:
 
 configure_https:
-  name: 写入 HTTPS 配置并重启
-  description: 把 ssl_certificate / ssl_key 写入 Home Assistant 的 HTTP 配置（新版写 .storage/http，旧版写 configuration.yaml），端口与 TLS 档位取自集成选项，随后重启以生效。
+  name: 写入 HTTPS 配置
+  description: 把 ssl_certificate / ssl_key 写入 Home Assistant 的 HTTP 配置（2026.11+ 写 .storage/http 的待确认配置；没有该存储的旧版本只发通知，列出你要自己加进 configuration.yaml 的两行，集成不改写用户 YAML），端口与 TLS 档位取自集成选项，随后发通知由你重启以生效。管理员服务。
   fields:
     restart:
       name: 自动重启（已废弃）
@@ -23,11 +23,11 @@ configure_https:
 
 probe:
   name: 测试 CA 连通性
-  description: 从当前 Home Assistant 主机逐个探测候选 ACME 目录的可达性，返回耗时与错误。
+  description: 从当前 Home Assistant 主机逐个探测候选 ACME 目录的可达性，返回耗时与错误。管理员服务。
 
 promote_https:
   name: 固化 HTTPS 配置
-  description: 确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。
+  description: 确认刚写入的 HTTPS 配置为正式配置，取消 5 分钟自动回退（HA 2026.11+ 的 HTTP 配置存储在 .storage/http，新配置默认只是待确认状态）。管理员服务。
 
 update_ddns:
   name: 立即更新动态域名
@@ -35,7 +35,7 @@ update_ddns:
 
 diagnose:
   name: 网络与证书诊断
-  description: 检测本机 IPv4/IPv6 出网、公网地址、DNS 服务商 zone 定位与证书链/私钥匹配情况，返回结构化结果。
+  description: 检测本机 IPv4/IPv6 出网、公网地址、DNS 服务商 zone 定位与证书链/私钥匹配情况，返回结构化结果。管理员服务。
 
 verify_cert:
   name: 校验证书文件
@@ -43,7 +43,7 @@ verify_cert:
 
 backup_cert:
   name: 备份证书
-  description: 把 fullchain.pem 与 privkey.pem 打包成 zip，换机或重装时可直接恢复，省一次 Let's Encrypt 签发。
+  description: 把 fullchain.pem 与 privkey.pem 打包成 zip，换机或重装时可直接恢复，省一次 Let's Encrypt 签发。管理员服务；只接受允许范围内的路径，且拒绝 www 目录（/local/ 免认证可下载）。
   fields:
     path:
       name: 备份目录
@@ -54,7 +54,7 @@ backup_cert:
 
 restore_cert:
   name: 恢复证书
-  description: 从 backup_cert 生成的 zip 恢复证书对；会先校验证书与私钥是否匹配，再覆盖到证书目录。
+  description: 从 backup_cert 生成的 zip 恢复证书对；会先校验证书与私钥是否匹配，再覆盖到证书目录。管理员服务；备份文件路径同样受允许范围限制。
   fields:
     path:
       name: 备份文件
@@ -66,7 +66,7 @@ restore_cert:
 
 purge:
   name: 清理集成全部痕迹
-  description: 危险操作。从 HTTP 配置里移除本集成的证书与私钥，并删除证书、ACME 账户密钥与备份；执行后重启即回到纯 HTTP。必须显式传 confirm true。
+  description: 危险操作。管理员服务。从 HTTP 配置里移除本集成的证书与私钥，并删除证书、ACME 账户密钥与备份；执行后发通知，你重启即回到纯 HTTP。必须显式传 confirm true。
   fields:
     confirm:
       name: 确认执行

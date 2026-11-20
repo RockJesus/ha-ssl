@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up HA SSL",
-        "description": "Pick a DNS provider and confirm the domain — everything else is automatic: issue the certificate, write it into Home Assistant's HTTPS config, restart to activate, and renew before expiry.\n\n**Domain**: defaults to Home Assistant's own URL, usually no change needed.\n**Credentials**: stored locally only, asked in the next step. Prefer a sub-account or token with DNS-only permissions.\n\nACME directory: {production} (staging: {staging})",
+        "description": "Pick a DNS provider and confirm the domain — everything else is automatic: issue the certificate, write it into Home Assistant's HTTPS config, notify you to restart, and renew before expiry.\n\n**Domain**: defaults to Home Assistant's own URL, usually no change needed.\n**Credentials**: stored locally only, asked in the next step. Prefer a sub-account or token with DNS-only permissions.\n\nACME directory: {production} (staging: {staging})",
         "data": {
           "provider": "DNS provider",
           "domain": "Certificate domain",
@@ -68,7 +68,7 @@
     "step": {
       "init": {
         "title": "Renewal and dynamic DNS",
-        "description": "Renewals start 30 days before expiry and restart Home Assistant afterwards.\n\n**Certificate**: multiple names or a wildcard are supported; expiry and failures raise notifications and can post to a webhook.\n\n**DDNS**: one 'name | type | value' per line; A / AAAA / CNAME / TXT in any number, auto follows this host's public address.",
+        "description": "Renewals start 30 days before expiry; when one succeeds you get a notification and decide when to restart (the integration never restarts on its own).\n\n**Certificate**: multiple names or a wildcard are supported; expiry and failures raise notifications and can post to a webhook.\n\n**DDNS**: one 'name | type | value' per line; A / AAAA / CNAME / TXT in any number, auto follows this host's public address.",
         "data": {
           "auto_renew": "Automatic renewal",
           "renew_days": "Renew this many days before expiry",
@@ -158,12 +158,12 @@
       "description": "Run one ACME dns-01 issuance immediately and write the certificate to the configured directory."
     },
     "configure_https": {
-      "name": "Write HTTPS config and restart",
-      "description": "Write ssl_certificate / ssl_key into the HTTP config used by the running Home Assistant version (a pending store entry on 2026.11+, configuration.yaml with a backup on older versions), then restart so HTTPS takes effect.",
+      "name": "Write HTTPS config",
+      "description": "Write ssl_certificate / ssl_key into the HTTP config used by the running Home Assistant version (a pending store entry on 2026.11+; on older versions without that store it only sends a notification with the two lines for you to add to your own configuration.yaml, the integration never rewrites user YAML), then notify you to restart so HTTPS takes effect. Admin-only service.",
       "fields": {
         "restart": {
-          "name": "Restart automatically",
-          "description": "Restart Home Assistant right after the config is written."
+          "name": "Restart automatically (deprecated)",
+          "description": "Kept only for compatibility with old calls; it no longer does anything. A notification asks you to restart yourself."
         }
       }
     },
