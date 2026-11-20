@@ -65,6 +65,9 @@ ALLOWED_DOMAINS = {
     "pypi.org",
     "opensource.org",
     "mit-license.org",
+    "my.home-assistant.io",
+    "img.shields.io",
+    "shields.io",
 }
 
 ALLOWED_IPS = {
