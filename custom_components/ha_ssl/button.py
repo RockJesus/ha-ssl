@@ -23,9 +23,12 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the issue button."""
+    """Set up the buttons."""
     coordinator: AcmeCertCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([IssueButton(coordinator), SyncHttpsButton(coordinator)])
+    entities: list[ButtonEntity] = [IssueButton(coordinator), SyncHttpsButton(coordinator)]
+    if coordinator.ddns is not None:
+        entities.append(DdnsSyncButton(coordinator))
+    async_add_entities(entities)
 
 
 class IssueButton(_CertBaseEntity, ButtonEntity):
@@ -106,6 +109,51 @@ class SyncHttpsButton(_CertBaseEntity, ButtonEntity):
                 "title": "HA SSL：HTTP 设置同步完成",
                 "notification_id": "ha_ssl_sync_https",
                 "message": body,
+            },
+            blocking=False,
+        )
+
+
+class DdnsSyncButton(_CertBaseEntity, ButtonEntity):
+    """Reconcile the DDNS records right now instead of waiting for the loop."""
+
+    _attr_translation_key = "ddns_sync"
+    _attr_icon = "mdi:cloud-sync"
+
+    def __init__(self, coordinator: AcmeCertCoordinator) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_ddns_sync"
+
+    async def async_press(self) -> None:
+        """Run one DDNS round and report the outcome."""
+        ddns = self.coordinator.ddns
+        if ddns is None:
+            raise HomeAssistantError("动态域名未启用，请先在集成选项里打开「动态域名解析」")
+        state = await ddns.async_update_now()
+        result = ddns.as_dict()
+        condition = result["condition"]
+        address = (
+            result.get("public_ipv6")
+            if result.get("record_types") == ["AAAA"]
+            else result.get("public_ip")
+        ) or result.get("record_value")
+        if condition == "updated":
+            title = "HA SSL：DDNS 已同步"
+            message = f"{result.get('record') or '记录'} 已更新为 {address}"
+        elif condition == "unchanged":
+            title = "HA SSL：DDNS 无需更新"
+            message = f"{result.get('record') or '记录'} 已是最新：{address}"
+        else:
+            title = "HA SSL：DDNS 同步失败"
+            message = f"更新失败：{state.last_error or '未知错误'}"
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": title,
+                "notification_id": "ha_ssl_ddns_sync",
+                "message": message,
             },
             blocking=False,
         )

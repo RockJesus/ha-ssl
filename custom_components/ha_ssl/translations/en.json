@@ -144,6 +144,9 @@
       },
       "sync_https": {
         "name": "Sync HTTP settings"
+      },
+      "ddns_sync": {
+        "name": "Sync DDNS now"
       }
     },
     "switch": {

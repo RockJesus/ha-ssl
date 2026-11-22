@@ -144,6 +144,9 @@
       },
       "sync_https": {
         "name": "同步 HTTP 设置"
+      },
+      "ddns_sync": {
+        "name": "立即同步 DDNS"
       }
     },
     "switch": {
