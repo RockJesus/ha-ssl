@@ -225,7 +225,7 @@ FAULT = "故障"
 class DdnsRecordSensor(_DdnsBaseSensor):
     """One entity per maintained address record.
 
-    Named ``DDNS-IPv6-<port>`` / ``DDNS-IPv4-<port>``; the state is the URL that
+    Named ``DDNS-IPv6`` / ``DDNS-IPv4``; the state is the URL that
     record serves (``https://<域名>:<端口>`` for AAAA, ``http://<域名>:<端口>``
     for A). When the provider has no such record, the published address does not
     match, or the lookup failed, the state is ``故障``.
@@ -252,7 +252,7 @@ class DdnsRecordSensor(_DdnsBaseSensor):
             item.name for item in ddns.specs if item.rtype in DDNS_ADDRESS_TYPES
         }
         suffix = "" if len(names) <= 1 else f" ({spec.name})"
-        self._attr_name = f"DDNS-{self._family}-{port}{suffix}"
+        self._attr_name = f"DDNS-{self._family}{suffix}"
         slug = re.sub(r"[^a-z0-9]+", "_", spec.name).strip("_")
         self._attr_unique_id = (
             f"{coordinator.entry.entry_id}_ddns_{slug}_{spec.rtype.lower()}"
