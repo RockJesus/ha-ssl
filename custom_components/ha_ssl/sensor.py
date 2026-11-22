@@ -233,8 +233,14 @@ class DdnsRecordSensor(_DdnsBaseSensor):
         super().__init__(coordinator, ddns)
         self._spec = spec
         self._scheme = scheme
-        # 用「主机名 + 类型」做名字，实体 ID 稳定且一条记录对应一个实体。
-        self._attr_name = f"{spec.name} {spec.rtype}"
+        # 只有一个受管主机名时就用类型做名字（设备名里已经带了域名，不必重复）；
+        # 维护多个主机名时再加前缀区分，实体 ID 仍然一条记录一个。
+        names = {
+            item.name for item in ddns.specs if item.rtype in DDNS_ADDRESS_TYPES
+        }
+        self._attr_name = (
+            spec.rtype if len(names) <= 1 else f"{spec.name} {spec.rtype}"
+        )
         slug = re.sub(r"[^a-z0-9]+", "_", spec.name).strip("_")
         self._attr_unique_id = (
             f"{coordinator.entry.entry_id}_ddns_{slug}_{spec.rtype.lower()}"
