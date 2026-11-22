@@ -16,7 +16,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .cert_manager import CertInfo, async_config_uses_cert
+from .cert_manager import (
+    CertInfo,
+    async_config_uses_cert,
+    async_http_active_port,
+)
 from .const import (
     CONF_PROVIDER,
     DDNS_ADDRESS_TYPES,
@@ -53,17 +57,20 @@ async def async_setup_entry(
         CertExpirySensor(coordinator),
         CertDaysLeftSensor(coordinator),
     ]
+    port = await async_http_active_port(hass)
+    scheme = (
+        "https"
+        if await async_config_uses_cert(hass, coordinator.manager.fullchain_path)
+        else "http"
+    )
+    entities.append(HttpPortSensor(coordinator, port, scheme))
+
     ddns: DdnsCoordinator | None = getattr(coordinator, "ddns", None)
     if ddns is not None:
-        scheme = (
-            "https"
-            if await async_config_uses_cert(hass, coordinator.manager.fullchain_path)
-            else "http"
-        )
         entities.append(PublicIpSensor(coordinator, ddns))
         entities.append(PublicIpv6Sensor(coordinator, ddns))
         entities.extend(
-            DdnsRecordSensor(coordinator, ddns, spec, scheme)
+            DdnsRecordSensor(coordinator, ddns, spec, port)
             for spec in ddns.specs
             if spec.rtype in DDNS_ADDRESS_TYPES
         )
@@ -212,35 +219,40 @@ class _DdnsBaseSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
         }
 
 
+FAULT = "故障"
+
+
 class DdnsRecordSensor(_DdnsBaseSensor):
     """One entity per maintained address record.
 
-    The state is ``域名+类型+入口协议`` (for example
-    ``home.example.com+AAAA+https``) so a dashboard shows at a glance which DNS
-    entry serves which protocol; details live in the attributes.
+    Named ``DDNS-IPv6-<port>`` / ``DDNS-IPv4-<port>``; the state is the URL that
+    record serves (``https://<域名>:<端口>`` for AAAA, ``http://<域名>:<端口>``
+    for A). When the provider has no such record, the published address does not
+    match, or the lookup failed, the state is ``故障``.
     """
 
     _attr_icon = "mdi:dns"
+    _attr_has_entity_name = False
 
     def __init__(
         self,
         coordinator: AcmeCertCoordinator,
         ddns: DdnsCoordinator,
         spec: RecordSpec,
-        scheme: str,
+        port: int,
     ) -> None:
         """Bind to one record of the DDNS loop."""
         super().__init__(coordinator, ddns)
         self._spec = spec
-        self._scheme = scheme
-        # 只有一个受管主机名时就用类型做名字（设备名里已经带了域名，不必重复）；
-        # 维护多个主机名时再加前缀区分，实体 ID 仍然一条记录一个。
+        self._port = port
+        # IPv4 走 A 记录（http），IPv6 走 AAAA 记录（https）；一条记录一个实体。
+        self._family = "IPv6" if spec.rtype == "AAAA" else "IPv4"
+        self._scheme = "https" if spec.rtype == "AAAA" else "http"
         names = {
             item.name for item in ddns.specs if item.rtype in DDNS_ADDRESS_TYPES
         }
-        self._attr_name = (
-            spec.rtype if len(names) <= 1 else f"{spec.name} {spec.rtype}"
-        )
+        suffix = "" if len(names) <= 1 else f" ({spec.name})"
+        self._attr_name = f"DDNS-{self._family}-{port}{suffix}"
         slug = re.sub(r"[^a-z0-9]+", "_", spec.name).strip("_")
         self._attr_unique_id = (
             f"{coordinator.entry.entry_id}_ddns_{slug}_{spec.rtype.lower()}"
@@ -251,10 +263,34 @@ class DdnsRecordSensor(_DdnsBaseSensor):
         return self.ddns_state.results.get(self._spec.key) if self.ddns_state else None
 
     @property
+    def url(self) -> str:
+        """URL served through this record."""
+        return f"{self._scheme}://{self._spec.name}:{self._port}"
+
+    @property
+    def fault_reason(self) -> str | None:
+        """Why the record cannot be trusted, or None when it is healthy."""
+        result = self._result
+        if result is None:
+            return "还没有同步结果"
+        if result.error:
+            return result.error
+        if result.deleted:
+            return "云端没有这条记录"
+        if result.pending:
+            return (
+                "云端没有这条记录"
+                if result.previous is None
+                else f"云端记录仍是旧值 {result.previous}"
+            )
+        if result.previous is None and not result.changed:
+            return "云端没有这条记录"
+        return None
+
+    @property
     def native_value(self) -> str:
-        """域名 + 记录类型 + 这个入口实际使用的协议。"""
-        parts = [self._spec.name, self._spec.rtype, self._scheme]
-        return "+".join(part for part in parts if part)
+        """URL when the record is healthy, ``故障`` otherwise."""
+        return FAULT if self.fault_reason else self.url
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
@@ -262,13 +298,19 @@ class DdnsRecordSensor(_DdnsBaseSensor):
         base = super().extra_state_attributes
         result = self._result
         state = self.ddns_state
+        reason = self.fault_reason
         base.update(
             {
                 "record_name": self._spec.name,
                 "record_type": self._spec.rtype,
+                "ip_version": self._family,
+                "url": self.url,
+                "port": self._port,
                 "scheme": self._scheme,
-                "value": result.value if result else None,
-                "previous": result.previous if result else None,
+                "healthy": reason is None,
+                "fault_reason": reason,
+                "cloud_value": result.previous if result else None,
+                "expected_value": result.value if result else None,
                 "changed": bool(result and result.changed),
                 "pending": bool(result and result.pending),
                 "deleted": bool(result and result.deleted),
@@ -277,6 +319,42 @@ class DdnsRecordSensor(_DdnsBaseSensor):
                     if state
                     else None
                 ),
+            }
+        )
+        return base
+
+
+class HttpPortSensor(_CertBaseEntity, SensorEntity):
+    """The port Home Assistant itself is serving on."""
+
+    _attr_translation_key = "http_port"
+    _attr_icon = "mdi:lan-connect"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "端口"
+
+    def __init__(
+        self, coordinator: AcmeCertCoordinator, port: int, scheme: str
+    ) -> None:
+        """Record the port HA loads with on this start."""
+        super().__init__(coordinator)
+        self._port = port
+        self._scheme = scheme
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_http_port"
+
+    @property
+    def native_value(self) -> int:
+        """Return the active HTTP port."""
+        return self._port
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Port plus the protocol HA actually serves."""
+        base = super().extra_state_attributes
+        base.update(
+            {
+                "port": self._port,
+                "scheme": self._scheme,
+                "https_enabled": self._scheme == "https",
             }
         )
         return base

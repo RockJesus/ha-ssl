@@ -132,6 +132,9 @@
       },
       "public_ipv6": {
         "name": "Public IPv6"
+      },
+      "http_port": {
+        "name": "Current HA port"
       }
     },
     "binary_sensor": {
