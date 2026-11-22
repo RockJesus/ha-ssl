@@ -126,27 +126,43 @@ class DdnsSyncButton(_CertBaseEntity, ButtonEntity):
         self._attr_unique_id = f"{coordinator.entry.entry_id}_ddns_sync"
 
     async def async_press(self) -> None:
-        """Run one DDNS round and report the outcome."""
+        """Run one DDNS round that always writes, regardless of the switch."""
         ddns = self.coordinator.ddns
         if ddns is None:
             raise HomeAssistantError("动态域名未启用，请先在集成选项里打开「动态域名解析」")
-        state = await ddns.async_update_now()
+        state = await ddns.async_update_now(force_write=True)
         result = ddns.as_dict()
         condition = result["condition"]
-        address = (
-            result.get("public_ipv6")
-            if result.get("record_types") == ["AAAA"]
-            else result.get("public_ip")
-        ) or result.get("record_value")
+
+        changed: list[str] = []
+        deleted: list[str] = []
+        failed: list[str] = []
+        for key, item in (result.get("records") or {}).items():
+            if item.get("error"):
+                failed.append(f"{key}：{item['error']}")
+            elif item.get("deleted"):
+                deleted.append(f"{key}：已删除 {item.get('previous')}")
+            elif item.get("changed"):
+                changed.append(f"{key} → {item.get('value')}")
+
+        keep = [
+            f"{key}"
+            for key, item in (result.get("records") or {}).items()
+            if not item.get("error") and not item.get("changed")
+        ]
+        lines = changed + deleted
         if condition == "updated":
             title = "HA SSL：DDNS 已同步"
-            message = f"{result.get('record') or '记录'} 已更新为 {address}"
+            message = "\n".join(lines) or f"{result.get('record') or '记录'} 已同步"
         elif condition == "unchanged":
             title = "HA SSL：DDNS 无需更新"
-            message = f"{result.get('record') or '记录'} 已是最新：{address}"
+            message = (
+                f"{result.get('record') or '记录'} 与云端一致，未改动。\n"
+                + "\n".join(keep)
+            ).strip()
         else:
             title = "HA SSL：DDNS 同步失败"
-            message = f"更新失败：{state.last_error or '未知错误'}"
+            message = "\n".join(failed) or (state.last_error or "未知错误")
         await self.hass.services.async_call(
             "persistent_notification",
             "create",

@@ -392,11 +392,23 @@ def _async_register_services(hass: HomeAssistant) -> None:
         ddns = getattr(coordinator, "ddns", None)
         if ddns is None:
             return {"message": "动态域名未启用，请先在集成选项里打开「动态域名解析」"}
-        await ddns.async_update_now()
+        await ddns.async_update_now(force_write=True)
         result = ddns.as_dict()
+        changed = [
+            f"{key} → {item.get('value')}"
+            for key, item in (result.get("records") or {}).items()
+            if item.get("changed") and not item.get("deleted")
+        ]
+        deleted = [
+            f"{key}：已删除 {item.get('previous')}"
+            for key, item in (result.get("records") or {}).items()
+            if item.get("deleted")
+        ]
         message = {
-            "updated": f"已更新为 {result['public_ip']}",
-            "unchanged": f"记录已是最新：{result['public_ip']}",
+            "updated": "；".join(changed + deleted) or "记录已同步",
+            "unchanged": f"记录已是最新：{result.get('record_value') or result['public_ip']}"
+            f" / {result['public_ipv6']}",
+            "pending": "自动同步已关闭，等待手动同步",
             "failed": f"更新失败：{result['error']}",
         }[result["condition"]]
         _LOGGER.info("手动更新 DDNS：%s", message)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from homeassistant.components.sensor import (
@@ -15,10 +16,16 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .cert_manager import CertInfo
-from .const import CONF_PROVIDER, DOMAIN, INTEGRATION_VERSION, MANUFACTURER
+from .cert_manager import CertInfo, async_config_uses_cert
+from .const import (
+    CONF_PROVIDER,
+    DDNS_ADDRESS_TYPES,
+    DOMAIN,
+    INTEGRATION_VERSION,
+    MANUFACTURER,
+)
 from .coordinator import AcmeCertCoordinator
-from .ddns import DdnsCoordinator, DdnsState
+from .ddns import DdnsCoordinator, DdnsState, RecordResult, RecordSpec
 from .providers import PROVIDER_CLASSES
 
 
@@ -48,9 +55,18 @@ async def async_setup_entry(
     ]
     ddns: DdnsCoordinator | None = getattr(coordinator, "ddns", None)
     if ddns is not None:
+        scheme = (
+            "https"
+            if await async_config_uses_cert(hass, coordinator.manager.fullchain_path)
+            else "http"
+        )
         entities.append(PublicIpSensor(coordinator, ddns))
         entities.append(PublicIpv6Sensor(coordinator, ddns))
-        entities.append(DdnsRecordCountSensor(coordinator, ddns))
+        entities.extend(
+            DdnsRecordSensor(coordinator, ddns, spec, scheme)
+            for spec in ddns.specs
+            if spec.rtype in DDNS_ADDRESS_TYPES
+        )
     async_add_entities(entities)
 
 
@@ -196,24 +212,68 @@ class _DdnsBaseSensor(CoordinatorEntity[DdnsCoordinator], SensorEntity):
         }
 
 
-class DdnsRecordCountSensor(_DdnsBaseSensor):
-    """How many DNS records the integration is maintaining."""
+class DdnsRecordSensor(_DdnsBaseSensor):
+    """One entity per maintained address record.
 
-    _attr_translation_key = "ddns_records"
+    The state is ``域名+类型+入口协议`` (for example
+    ``home.example.com+AAAA+https``) so a dashboard shows at a glance which DNS
+    entry serves which protocol; details live in the attributes.
+    """
+
     _attr_icon = "mdi:dns"
-    _attr_native_unit_of_measurement = "条"
 
     def __init__(
-        self, coordinator: AcmeCertCoordinator, ddns: DdnsCoordinator
+        self,
+        coordinator: AcmeCertCoordinator,
+        ddns: DdnsCoordinator,
+        spec: RecordSpec,
+        scheme: str,
     ) -> None:
-        """Initialize the record count sensor."""
+        """Bind to one record of the DDNS loop."""
         super().__init__(coordinator, ddns)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_ddns_records"
+        self._spec = spec
+        self._scheme = scheme
+        # 用「主机名 + 类型」做名字，实体 ID 稳定且一条记录对应一个实体。
+        self._attr_name = f"{spec.name} {spec.rtype}"
+        slug = re.sub(r"[^a-z0-9]+", "_", spec.name).strip("_")
+        self._attr_unique_id = (
+            f"{coordinator.entry.entry_id}_ddns_{slug}_{spec.rtype.lower()}"
+        )
 
     @property
-    def native_value(self) -> int:
-        """Number of configured records."""
-        return len(self.ddns.specs)
+    def _result(self) -> RecordResult | None:
+        return self.ddns_state.results.get(self._spec.key) if self.ddns_state else None
+
+    @property
+    def native_value(self) -> str:
+        """域名 + 记录类型 + 这个入口实际使用的协议。"""
+        parts = [self._spec.name, self._spec.rtype, self._scheme]
+        return "+".join(part for part in parts if part)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Per-record details on top of the shared DDNS attributes."""
+        base = super().extra_state_attributes
+        result = self._result
+        state = self.ddns_state
+        base.update(
+            {
+                "record_name": self._spec.name,
+                "record_type": self._spec.rtype,
+                "scheme": self._scheme,
+                "value": result.value if result else None,
+                "previous": result.previous if result else None,
+                "changed": bool(result and result.changed),
+                "pending": bool(result and result.pending),
+                "deleted": bool(result and result.deleted),
+                "last_error": (
+                    result.error if result and result.error else state.last_error
+                    if state
+                    else None
+                ),
+            }
+        )
+        return base
 
 
 class PublicIpSensor(_DdnsBaseSensor):

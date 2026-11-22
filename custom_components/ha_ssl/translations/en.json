@@ -43,14 +43,16 @@
           "ddns_record_types": "Record types",
           "ddns_interval": "Check interval",
           "ddns_ttl": "Record TTL",
-          "ddns_notify": "Notify on address change"
+          "ddns_notify": "Notify on address change",
+          "ddns_auto_sync": "Push DDNS changes automatically when the public IP moves"
         },
         "data_description": {
           "ddns_record": "Usually the certificate domain itself, or a subdomain such as home.example.com",
-          "ddns_record_types": "A (IPv4) is the usual choice; AAAA only when the line has a fixed IPv6",
+          "ddns_record_types": "Only the ticked types are kept; records of unticked types at the same name are deleted, and unticking both A and AAAA removes them entirely",
           "ddns_interval": "How often to look up the public IP, default 5 minutes",
           "ddns_ttl": "TTL written into the record, default 600 seconds",
-          "ddns_notify": "Send a persistent notification when the IP changes or a record write fails"
+          "ddns_notify": "Send a persistent notification when the IP changes or a record write fails",
+          "ddns_auto_sync": "When on, a changed public address is written to the DNS provider right away. When off, the integration only detects and notifies, and the “Sync DDNS now” button applies the change"
         }
       }
     },
@@ -85,7 +87,8 @@
           "tls_profile": "TLS profile",
           "ddns_records": "DNS record list",
           "ddns_ttl": "Record TTL",
-          "ddns_notify": "Notify on change"
+          "ddns_notify": "Notify on change",
+          "ddns_auto_sync": "Push DDNS changes automatically when the public IP moves"
         },
         "data_description": {
           "auto_renew": "When off, renewal only happens via the issue button",
@@ -93,7 +96,7 @@
           "ddns_enabled": "Compare the public address with the A/AAAA records on a schedule and rewrite them through the same DNS provider API",
           "ddns_record": "Empty means the certificate domain. Must exist in this provider account; missing records are created automatically",
           "ddns_interval": "How often to read the public IP and check the record, 5 minutes by default",
-          "ddns_record_types": "Pick any of A (IPv4), AAAA (IPv6), CNAME (alias). AAAA needs a routable public IPv6 on this host",
+          "ddns_record_types": "Only the ticked types are kept; records of unticked types at the same name are deleted, and unticking both A and AAAA removes them entirely",
           "ddns_cname_record": "Optional alias record, for example home. Leave empty to skip CNAME; must differ from the A/AAAA name",
           "ddns_cname_target": "Hostname the CNAME points to (for example another DDNS name); required when CNAME is selected",
           "cert_domains": "Comma separated; wildcard *.example.com is supported via DNS-01. Empty keeps the main domain only",
@@ -103,7 +106,8 @@
           "tls_profile": "Modern allows TLS 1.3 only; Intermediate also accepts TLS 1.2 for older devices",
           "ddns_records": "One per line: name | type | value. Types: A / AAAA / CNAME / TXT; use auto for the public address",
           "ddns_ttl": "TTL in seconds for created or updated records; providers may raise it to their minimum",
-          "ddns_notify": "Send a persistent notification and fire ha_ssl_ddns_changed when a record changes"
+          "ddns_notify": "Send a persistent notification and fire ha_ssl_ddns_changed when a record changes",
+          "ddns_auto_sync": "When on, a changed public address is written to the DNS provider right away. When off, the integration only detects and notifies, and the “Sync DDNS now” button applies the change"
         }
       }
     },
@@ -124,13 +128,10 @@
         "name": "Days until expiry"
       },
       "public_ip": {
-        "name": "Public IP"
+        "name": "Public IPv4"
       },
       "public_ipv6": {
         "name": "Public IPv6"
-      },
-      "ddns_records": {
-        "name": "Records maintained"
       }
     },
     "binary_sensor": {
@@ -140,10 +141,10 @@
     },
     "button": {
       "issue": {
-        "name": "Issue now"
+        "name": "Issue certificate now"
       },
       "sync_https": {
-        "name": "Sync HTTP settings"
+        "name": "Sync to HA HTTP settings"
       },
       "ddns_sync": {
         "name": "Sync DDNS now"
@@ -152,6 +153,9 @@
     "switch": {
       "auto_renew": {
         "name": "Automatic renewal"
+      },
+      "ddns_auto_sync": {
+        "name": "DDNS auto sync"
       }
     }
   },
@@ -175,8 +179,8 @@
       "description": "Promote the pending HTTPS config to the stable one and cancel the 5-minute auto-revert."
     },
     "update_ddns": {
-      "name": "Update dynamic DNS now",
-      "description": "Read the public IPv4 immediately, compare it with the A record and rewrite it when needed."
+      "name": "Sync DDNS now",
+      "description": "Reconcile every managed record right away: ticked types are pointed at the current public address, unticked A/AAAA records are deleted from the provider, and this call writes even when auto sync is off. Returns the per-record outcome."
     }
   }
 }

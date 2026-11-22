@@ -36,6 +36,7 @@ CONF_DDNS_CNAME_TARGET = "ddns_cname_target"
 CONF_DDNS_RECORDS = "ddns_records"
 CONF_DDNS_TTL = "ddns_ttl"
 CONF_DDNS_NOTIFY = "ddns_notify"
+CONF_DDNS_AUTO_SYNC = "ddns_auto_sync"
 
 # 证书
 CONF_CERT_DOMAINS = "cert_domains"
@@ -79,6 +80,8 @@ DDNS_MIN_TTL = 60
 DDNS_MAX_TTL = 86400
 DEFAULT_DDNS_TTL = 600
 DEFAULT_DDNS_NOTIFY = True
+DEFAULT_DDNS_AUTO_SYNC = True
+DDNS_ADDRESS_TYPES = ("A", "AAAA")
 DEFAULT_EXPIRY_ALERT_DAYS = 7
 DEFAULT_HTTPS_PORT = 8123
 TLS_PROFILES = ("modern", "intermediate")

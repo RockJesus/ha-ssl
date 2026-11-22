@@ -26,6 +26,7 @@ from .const import (
     CONF_CERT_DIR,
     CONF_CERT_DOMAINS,
     CONF_CLOUDFLARE_API_TOKEN,
+    CONF_DDNS_AUTO_SYNC,
     CONF_DDNS_CNAME_RECORD,
     CONF_DDNS_CNAME_TARGET,
     CONF_DDNS_ENABLED,
@@ -52,6 +53,7 @@ from .const import (
     DEFAULT_AUTO_RENEW,
     DEFAULT_CERT_DIR,
     DEFAULT_DDNS_ENABLED,
+    DEFAULT_DDNS_AUTO_SYNC,
     DEFAULT_DDNS_INTERVAL,
     DEFAULT_DDNS_NOTIFY,
     DEFAULT_DDNS_RECORD_TYPES,
@@ -290,6 +292,11 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_DDNS_NOTIFY: bool(
                             user_input.get(CONF_DDNS_NOTIFY, DEFAULT_DDNS_NOTIFY)
                         ),
+                        CONF_DDNS_AUTO_SYNC: bool(
+                            user_input.get(
+                                CONF_DDNS_AUTO_SYNC, DEFAULT_DDNS_AUTO_SYNC
+                            )
+                        ),
                     }
             if not errors:
                 return self.async_create_entry(
@@ -331,6 +338,9 @@ class HaSslConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Optional(
                     CONF_DDNS_NOTIFY, default=DEFAULT_DDNS_NOTIFY
+                ): bool,
+                vol.Optional(
+                    CONF_DDNS_AUTO_SYNC, default=DEFAULT_DDNS_AUTO_SYNC
                 ): bool,
             }
         )
@@ -508,6 +518,14 @@ class HaSslOptionsFlow(OptionsFlow):
                         CONF_DDNS_NOTIFY,
                         default=bool(
                             options.get(CONF_DDNS_NOTIFY, DEFAULT_DDNS_NOTIFY)
+                        ),
+                    ): bool,
+                    vol.Optional(
+                        CONF_DDNS_AUTO_SYNC,
+                        default=bool(
+                            options.get(
+                                CONF_DDNS_AUTO_SYNC, DEFAULT_DDNS_AUTO_SYNC
+                            )
                         ),
                     ): bool,
                     vol.Optional(

@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_DDNS_AUTO_SYNC,
     CONF_DDNS_CNAME_RECORD,
     CONF_DDNS_CNAME_TARGET,
     CONF_DDNS_INTERVAL,
@@ -26,11 +27,13 @@ from .const import (
     CONF_DDNS_RECORDS,
     CONF_DDNS_TTL,
     CONF_PROVIDER,
+    DDNS_ADDRESS_TYPES,
     DDNS_HISTORY_LIMIT,
     DDNS_MAX_INTERVAL,
     DDNS_MAX_TTL,
     DDNS_MIN_INTERVAL,
     DDNS_MIN_TTL,
+    DEFAULT_DDNS_AUTO_SYNC,
     DEFAULT_DDNS_INTERVAL,
     DEFAULT_DDNS_NOTIFY,
     DEFAULT_DDNS_RECORD_TYPES,
@@ -78,8 +81,11 @@ class RecordResult:
     rtype: str = "A"
     name: str = ""
     value: str | None = None
+    expected: str | None = None
     previous: str | None = None
     changed: bool = False
+    pending: bool = False
+    deleted: bool = False
     error: str | None = None
 
 
@@ -102,6 +108,7 @@ class DdnsState:
     ipv4_ok: bool | None = None
     ipv6_ok: bool | None = None
     results: dict[str, RecordResult] = field(default_factory=dict)
+    pending: list[str] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -209,14 +216,20 @@ async def async_get_public_ip(
 
 
 def normalize_record_types(raw: Any) -> list[str]:
-    """Return the record types to maintain, newest options first."""
+    """Return the record types the user selected, newest options first.
+
+    An explicitly empty selection stays empty on purpose: the integration then
+    treats "no address type" as "this hostname should not have A/AAAA records
+    at all" and removes them from the DNS provider.
+    """
+    if raw is None:
+        return list(DEFAULT_DDNS_RECORD_TYPES)
     if isinstance(raw, str):
         raw = [raw]
-    if not isinstance(raw, (list, tuple)) or not raw:
+    if not isinstance(raw, (list, tuple)):
         return list(DEFAULT_DDNS_RECORD_TYPES)
-    wanted = {str(item).upper() for item in raw}
-    order = [rt for rt in ("A", "AAAA", "CNAME", "TXT") if rt in wanted]
-    return order or list(DEFAULT_DDNS_RECORD_TYPES)
+    wanted = {str(item).strip().upper() for item in raw if str(item).strip()}
+    return [rt for rt in ("A", "AAAA", "CNAME", "TXT") if rt in wanted]
 
 
 def is_hostname(value: str) -> bool:
@@ -321,7 +334,11 @@ def build_record_specs(
 
     types = normalize_record_types(entry.options.get(CONF_DDNS_RECORD_TYPES))
     name = _clean_name(str(entry.options.get(CONF_DDNS_RECORD) or ""), default_name)
-    specs = [RecordSpec(name=name, rtype=rt, value="auto") for rt in types if rt != "CNAME"]
+    specs = [
+        RecordSpec(name=name, rtype=rt, value="auto")
+        for rt in types
+        if rt in DDNS_ADDRESS_TYPES
+    ]
     if "CNAME" in types:
         cname_name = _clean_name(
             str(entry.options.get(CONF_DDNS_CNAME_RECORD) or ""), ""
@@ -373,10 +390,24 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         self.notify = bool(
             entry.options.get(CONF_DDNS_NOTIFY, DEFAULT_DDNS_NOTIFY)
         )
+        self.auto_sync = bool(
+            entry.options.get(CONF_DDNS_AUTO_SYNC, DEFAULT_DDNS_AUTO_SYNC)
+        )
         self.record_types = sorted({spec.rtype for spec in self.specs})
-        address_specs = [spec for spec in self.specs if spec.rtype in ("A", "AAAA")]
+        address_specs = [spec for spec in self.specs if spec.rtype in DDNS_ADDRESS_TYPES]
+        # 这些主机名归集成管：选了哪种地址类型就保留哪种，没选的连同云端的
+        # 旧记录一起清掉，实现"期望状态"而不是"只追加"。
+        managed = {spec.name for spec in address_specs}
+        if not str(entry.options.get(CONF_DDNS_RECORDS) or "").strip():
+            # 用「记录类型」勾选方式配置时，主记录也算受管（哪怕一种类型都没勾，
+            # 那也意味着这个主机名不该留地址记录）。
+            managed.add(
+                _clean_name(str(entry.options.get(CONF_DDNS_RECORD) or ""), domain)
+            )
+        self.managed_names = sorted(managed)
         self.record = (address_specs[0].name if address_specs else (self.specs[0].name if self.specs else domain))
         self._last_notified_error: str | None = None
+        self._last_pending_signature: tuple[str, ...] = ()
         self._history: list[dict[str, Any]] = []
 
     def _async_provider(self) -> DnsProvider:
@@ -411,7 +442,7 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         value: str,
     ) -> RecordResult:
         """Make one DNS record match the desired value."""
-        result = RecordResult(rtype=rtype, name=name, value=value)
+        result = RecordResult(rtype=rtype, name=name, value=value, expected=value)
         zone, relative = await self._async_zone(provider, name)
         records = await provider.async_list_records(zone, relative, rtype)
 
@@ -423,12 +454,15 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
 
         expected = value if rtype == "TXT" else value.lower()
         result.previous = records[0]["value"]
-        if all(
-            (str(item["value"]) if rtype == "TXT" else str(item["value"]).lower())
-            == expected
+        same = [
+            str(item["value"]) if rtype == "TXT" else str(item["value"]).lower()
             for item in records
-        ):
+        ]
+        if all(item == expected for item in same):
             _LOGGER.debug("DDNS 记录未变化：%s %s = %s", name, rtype, value)
+            for extra in records[1:]:
+                await provider.async_delete_record(extra["handle"])
+                result.changed = True
             return result
 
         await provider.async_update_record(
@@ -440,74 +474,135 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         result.changed = True
         if len(records) > 1:
             _LOGGER.warning(
-                "DDNS 同名 %s 记录有 %s 条，只更新了第一条，请清理多余记录",
+                "DDNS 同名 %s 记录有 %s 条，只更新了第一条，多余的已删除",
                 rtype,
                 len(records),
             )
+            for extra in records[1:]:
+                await provider.async_delete_record(extra["handle"])
         return result
 
-    def _remember_change(
-        self, spec: RecordSpec, result: RecordResult
-    ) -> None:
+    async def _async_compare(
+        self,
+        provider: DnsProvider,
+        rtype: str,
+        name: str,
+        value: str,
+    ) -> RecordResult:
+        """Read the current record without touching it (auto sync is off)."""
+        result = RecordResult(rtype=rtype, name=name, value=value, expected=value)
+        zone, relative = await self._async_zone(provider, name)
+        records = await provider.async_list_records(zone, relative, rtype)
+        if not records:
+            result.pending = True
+            return result
+        expected = value if rtype == "TXT" else value.lower()
+        result.previous = records[0]["value"]
+        same = [
+            str(item["value"]) if rtype == "TXT" else str(item["value"]).lower()
+            for item in records
+        ]
+        result.pending = (
+            len(records) > 1 or not all(item == expected for item in same)
+        )
+        return result
+
+    async def _async_prune_type(
+        self,
+        provider: DnsProvider,
+        rtype: str,
+        name: str,
+    ) -> RecordResult | None:
+        """Delete every record of a type the user did not ask to keep."""
+        zone, relative = await self._async_zone(provider, name)
+        records = await provider.async_list_records(zone, relative, rtype)
+        if not records:
+            return None
+        for item in records:
+            await provider.async_delete_record(item["handle"])
+        previous = ", ".join(str(item["value"]) for item in records)
+        _LOGGER.info("DDNS 删除未勾选的 %s 记录：%s（原值 %s）", rtype, name, previous)
+        return RecordResult(
+            rtype=rtype,
+            name=name,
+            previous=previous,
+            changed=True,
+            deleted=True,
+        )
+
+    def _remember_change(self, key: str, result: RecordResult) -> None:
         """Record one change and announce it."""
         entry = {
             "at": dt_util.utcnow().isoformat(),
-            "record": spec.key,
+            "record": key,
             "from": result.previous,
-            "to": result.value,
+            "to": None if result.deleted else result.value,
+            "deleted": result.deleted,
         }
         self._history.append(entry)
         del self._history[:-DDNS_HISTORY_LIMIT]
         self.hass.bus.async_fire(EVENT_DDNS_CHANGED, entry)
         if not self.notify:
             return
+        if result.deleted:
+            title = "HA SSL · 动态域名已删除多余记录"
+            message = f"{key}：已从云端删除 {result.previous}"
+        else:
+            title = "HA SSL · 动态域名已更新"
+            message = f"{key}：{result.previous or '(无)'} → {result.value}"
         self.hass.async_create_task(
             self.hass.services.async_call(
                 "persistent_notification",
                 "create",
                 {
-                    "title": "HA SSL · 动态域名已更新",
-                    "notification_id": f"ha_ssl_ddns_{spec.name}_{spec.rtype}",
-                    "message": (
-                        f"{spec.key}：{result.previous or '(无)'} → {result.value}"
-                    ),
+                    "title": title,
+                    "notification_id": f"ha_ssl_ddns_{result.name}_{result.rtype}",
+                    "message": message,
                 },
                 blocking=False,
             )
         )
 
-    async def _async_update_data(self) -> DdnsState:
-        """Check every configured record and update the ones that drifted."""
+    async def _async_update_data(self, *, force_write: bool = False) -> DdnsState:
+        """Check every configured record, then write unless auto sync is off."""
         state = self.data if isinstance(self.data, DdnsState) else DdnsState()
         state.record = self.record
         state.checked_at = dt_util.utcnow()
         state.results = {}
+        state.pending = []
         errors: list[str] = list(self._spec_errors)
         changed = False
         provider = self._async_provider()
+        write = self.auto_sync or force_write
 
         needs_v4 = any(spec.rtype == "A" and spec.value == "auto" for spec in self.specs)
         needs_v6 = any(
             spec.rtype == "AAAA" and spec.value == "auto" for spec in self.specs
         )
 
-        if needs_v4:
-            try:
-                ip, source = await async_get_public_ip(self._session, 4)
-                state.public_ip = ip
-                state.source = source
-                state.ipv4_ok = True
-            except DdnsError as err:
-                state.ipv4_ok = False
+        # 两个地址族都探：公网 IPv4/IPv6 传感器要如实反映当前状态，
+        # 而不是只在有对应记录时才显示。
+        try:
+            ip, source = await async_get_public_ip(self._session, 4)
+            state.public_ip = ip
+            state.source = source
+            state.ipv4_ok = True
+        except DdnsError as err:
+            state.public_ip = None
+            state.source = None
+            state.ipv4_ok = False
+            if needs_v4:
                 errors.append(f"公网 IPv4：{err}")
-        if needs_v6:
-            try:
-                ip6, source6 = await async_get_public_ip(self._session, 6)
-                state.public_ipv6 = ip6
-                state.source_v6 = source6
-                state.ipv6_ok = True
-            except DdnsError as err:
-                state.ipv6_ok = False
+        try:
+            ip6, source6 = await async_get_public_ip(self._session, 6)
+            state.public_ipv6 = ip6
+            state.source_v6 = source6
+            state.ipv6_ok = True
+        except DdnsError as err:
+            state.public_ipv6 = None
+            state.source_v6 = None
+            state.ipv6_ok = False
+            if needs_v6:
                 errors.append(f"公网 IPv6：{err}")
 
         for spec in self.specs:
@@ -523,8 +618,14 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                     )
                     continue
             try:
-                result = await self._async_reconcile(
-                    provider, spec.rtype, spec.name, value
+                result = (
+                    await self._async_reconcile(
+                        provider, spec.rtype, spec.name, value
+                    )
+                    if write
+                    else await self._async_compare(
+                        provider, spec.rtype, spec.name, value
+                    )
                 )
             except (DnsProviderError, DdnsError) as err:
                 result = RecordResult(
@@ -538,13 +639,49 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                 )
                 errors.append(f"{spec.key}：{err}")
                 _LOGGER.exception("DDNS 循环异常（%s）", spec.key)
+            if result.pending:
+                state.pending.append(spec.key)
             state.results[spec.key] = result
             if result.changed:
                 changed = True
                 state.last_change_at = state.checked_at
-                if spec.rtype in ("A", "AAAA"):
+                if spec.rtype in DDNS_ADDRESS_TYPES:
                     state.record_value = result.value
-                self._remember_change(spec, result)
+                self._remember_change(spec.key, result)
+
+        # 期望状态：没勾的地址类型不该留在云端（含"什么都不勾"= 全删）。
+        if write:
+            desired = {
+                (spec.name, spec.rtype)
+                for spec in self.specs
+                if spec.rtype in DDNS_ADDRESS_TYPES
+            }
+            for name in self.managed_names:
+                for rtype in DDNS_ADDRESS_TYPES:
+                    if (name, rtype) in desired:
+                        continue
+                    key = f"{rtype} {name}（未勾选）"
+                    try:
+                        pruned = await self._async_prune_type(provider, rtype, name)
+                    except (DnsProviderError, DdnsError) as err:
+                        state.results[key] = RecordResult(
+                            rtype=rtype, name=name, error=str(err)
+                        )
+                        errors.append(f"{key}：{err}")
+                        continue
+                    except Exception as err:  # noqa: BLE001 - keep the loop alive
+                        state.results[key] = RecordResult(
+                            rtype=rtype, name=name, error=repr(err)
+                        )
+                        errors.append(f"{key}：{err}")
+                        _LOGGER.exception("DDNS 清理异常（%s）", key)
+                        continue
+                    if pruned is None:
+                        continue
+                    state.results[key] = pruned
+                    changed = True
+                    state.last_change_at = state.checked_at
+                    self._remember_change(key, pruned)
 
         zone, relative = self._zones.get(self.record, (None, ""))
         state.zone = zone
@@ -552,12 +689,41 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         state.changed = changed
         state.last_error = "；".join(errors) if errors else None
         state.history = list(self._history)
+        if state.pending:
+            self._async_notify_pending(state.pending)
+        else:
+            self._last_pending_signature = ()
         if errors:
             _LOGGER.warning("DDNS 检查存在失败项：%s", state.last_error)
             self._async_notify_error(state.last_error)
         else:
             self._last_notified_error = None
         return state
+
+    def _async_notify_pending(self, pending: list[str]) -> None:
+        """Tell the user once that a change waits for the manual sync button."""
+        signature = tuple(sorted(pending))
+        if not self.notify or signature == self._last_pending_signature:
+            return
+        self._last_pending_signature = signature
+        self.hass.async_create_task(
+            self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "HA SSL · 动态域名待同步",
+                    "notification_id": "ha_ssl_ddns_pending",
+                    "message": (
+                        "公网地址已变化，但「DDNS 自动同步」开关处于关闭状态，"
+                        "云端记录尚未更新。\n\n待同步："
+                        + "、".join(pending)
+                        + "\n\n点一下「立即同步 DDNS」按钮即可应用，"
+                        "或在集成选项里把自动同步打开。"
+                    ),
+                },
+                blocking=False,
+            )
+        )
 
     def _async_notify_error(self, message: str) -> None:
         """Announce a new failure once, not every loop."""
@@ -577,9 +743,13 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             )
         )
 
-    async def async_update_now(self) -> DdnsState:
-        """Force one round and publish the result."""
-        data = await self._async_update_data()
+    async def async_update_now(self, *, force_write: bool = True) -> DdnsState:
+        """Force one round and publish the result.
+
+        ``force_write`` makes the manual button work even when the
+        "DDNS 自动同步" switch is off.
+        """
+        data = await self._async_update_data(force_write=force_write)
         self.async_set_updated_data(data)
         return data
 
@@ -591,14 +761,21 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             "record": state.record,
             "record_types": self.record_types,
             "records_configured": len(self.specs),
+            "auto_sync": self.auto_sync,
+            "managed_names": list(self.managed_names),
+            "pending": list(state.pending),
             "ttl": self.ttl,
             "public_ip": state.public_ip,
             "public_ipv6": state.public_ipv6,
             "record_value": state.record_value,
             "zone": state.zone,
-            "condition": "updated"
-            if state.changed
-            else ("unchanged" if ok else "failed"),
+            "condition": (
+                "updated"
+                if state.changed
+                else "pending"
+                if state.pending
+                else ("unchanged" if ok else "failed")
+            ),
             "checked_at": state.checked_at.isoformat() if state.checked_at else None,
             "last_change_at": state.last_change_at.isoformat()
             if state.last_change_at
@@ -614,8 +791,11 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                     "type": result.rtype,
                     "name": result.name,
                     "value": result.value,
+                    "expected": result.expected,
                     "previous": result.previous,
                     "changed": result.changed,
+                    "pending": result.pending,
+                    "deleted": result.deleted,
                     "error": result.error,
                 }
                 for key, result in state.results.items()
