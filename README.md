@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/RockJesus/ha-ssl/main/custom_components/ha_ssl/brand/logo.png" width="160" alt="HA SSL">
+<img src="https://raw.githubusercontent.com/RockJesus/ha-ssl/main/custom_components/ha_ssl/brand/logo.png" width="320" alt="HA SSL">
 
 # HA SSL
 
