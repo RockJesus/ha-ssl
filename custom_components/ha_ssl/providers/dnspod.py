@@ -7,6 +7,7 @@ supported by design.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -14,7 +15,7 @@ from typing import Any
 import aiohttp
 
 from ..const import DNSPOD_ENDPOINT, PROVIDER_API_TIMEOUT
-from .base import DnsProvider, DnsProviderError
+from .base import DnsProvider, DnsProviderError, describe_network_error
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,24 +46,28 @@ class DnspodProvider(DnsProvider):
             **params,
         }
         timeout = aiohttp.ClientTimeout(total=PROVIDER_API_TIMEOUT)
-        async with self._session.post(
-            f"{DNSPOD_ENDPOINT}{path}",
-            data=data,
-            timeout=timeout,
-            headers={"User-Agent": "ha-ssl (Home Assistant)"},
-        ) as resp:
-            text = await resp.text()
-            try:
-                payload = json.loads(text)
-            except ValueError as err:
-                raise DnsProviderError(
-                    f"DNSPod 返回非 JSON 响应：HTTP {resp.status}"
-                ) from err
+        try:
+            async with self._session.post(
+                f"{DNSPOD_ENDPOINT}{path}",
+                data=data,
+                timeout=timeout,
+                headers={"User-Agent": "ha-ssl (Home Assistant)"},
+            ) as resp:
+                text = await resp.text()
+                status_code = resp.status
+        except (asyncio.TimeoutError, aiohttp.ClientError) as err:
+            raise describe_network_error(err, PROVIDER_API_TIMEOUT) from err
+        try:
+            payload = json.loads(text)
+        except ValueError as err:
+            raise DnsProviderError(
+                f"DNSPod 返回非 JSON 响应：HTTP {status_code}"
+            ) from err
 
         status = payload.get("status") or {}
         code = str(status.get("code"))
         if code != "1":
-            message = status.get("message") or f"HTTP {resp.status}"
+            message = status.get("message") or f"HTTP {status_code}"
             raise DnsProviderError(
                 f"DNSPod 接口报错（{code}）：{message}", payload, code
             )

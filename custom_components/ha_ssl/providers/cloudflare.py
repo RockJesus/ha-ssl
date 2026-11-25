@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 import aiohttp
 
 from ..const import CLOUDFLARE_API_BASE, PROVIDER_API_TIMEOUT
-from .base import DnsProvider, DnsProviderError
+from .base import DnsProvider, DnsProviderError, describe_network_error
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,11 +41,14 @@ class CloudflareProvider(DnsProvider):
         """Call the v4 API and validate the success envelope."""
         url = f"{CLOUDFLARE_API_BASE}{path}"
         timeout = aiohttp.ClientTimeout(total=PROVIDER_API_TIMEOUT)
-        async with self._session.request(
-            method, url, headers=self._headers, timeout=timeout, **kwargs
-        ) as resp:
-            payload = await resp.json(content_type=None)
-            status = resp.status
+        try:
+            async with self._session.request(
+                method, url, headers=self._headers, timeout=timeout, **kwargs
+            ) as resp:
+                payload = await resp.json(content_type=None)
+                status = resp.status
+        except (asyncio.TimeoutError, aiohttp.ClientError) as err:
+            raise describe_network_error(err, PROVIDER_API_TIMEOUT) from err
 
         if status >= 400 or not payload.get("success"):
             errors = payload.get("errors") or []

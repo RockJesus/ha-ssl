@@ -6,6 +6,7 @@ the host resolver.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -19,7 +20,7 @@ from urllib.parse import quote
 import aiohttp
 
 from ..const import ALIYUN_API_TIMEOUT, ALIYUN_DNS_ENDPOINT, ALIYUN_DNS_VERSION
-from .base import DnsProvider, DnsProviderError
+from .base import DnsProvider, DnsProviderError, describe_network_error
 
 # 严格按错误码判定，不用子串匹配：InvalidAccessKeyId.NotFound 也含 NotFound，
 # 直接匹配会把凭据错误误当成“域名不存在”，一路 continue 后报出误导性的错误。
@@ -123,24 +124,28 @@ class AliyunProvider(DnsProvider):
         url = f"{ALIYUN_DNS_ENDPOINT}?{query}"
 
         timeout = aiohttp.ClientTimeout(total=ALIYUN_API_TIMEOUT)
-        async with self._session.get(url, timeout=timeout) as resp:
-            text = await resp.text()
-            try:
-                payload = json.loads(text)
-            except ValueError as err:
-                raise DnsProviderError(
-                    f"阿里云 DNS 返回非 JSON 响应：HTTP {resp.status}"
-                ) from err
+        try:
+            async with self._session.get(url, timeout=timeout) as resp:
+                text = await resp.text()
+                status = resp.status
+        except (asyncio.TimeoutError, aiohttp.ClientError) as err:
+            raise describe_network_error(err, ALIYUN_API_TIMEOUT) from err
+        try:
+            payload = json.loads(text)
+        except ValueError as err:
+            raise DnsProviderError(
+                f"阿里云 DNS 返回非 JSON 响应：HTTP {status}"
+            ) from err
 
-        if resp.status >= 400 or payload.get("Code"):
+        if status >= 400 or payload.get("Code"):
             message = (
                 payload.get("Message")
                 or payload.get("Recommend")
-                or f"HTTP {resp.status}"
+                or f"HTTP {status}"
             )
             code = str(payload.get("Code") or "")
             raise DnsProviderError(
-                f"阿里云 DNS 接口报错（{code or resp.status}）：{message}", payload, code
+                f"阿里云 DNS 接口报错（{code or status}）：{message}", payload, code
             )
 
         return payload

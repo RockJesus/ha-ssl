@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -24,6 +25,20 @@ class DnsProviderError(Exception):
         super().__init__(message)
         self.payload = payload or {}
         self.code = code
+
+
+def describe_network_error(err: BaseException, timeout: float) -> DnsProviderError:
+    """Turn a transport failure into a provider error with a readable reason.
+
+    ``asyncio.TimeoutError`` stringifies to an empty string, which used to leave
+    the log line / entity attribute with no reason at all.
+    """
+    if isinstance(err, asyncio.TimeoutError):
+        return DnsProviderError(
+            f"接口超时（{timeout:g} 秒未响应），请检查网络或稍后重试"
+        )
+    detail = str(err).strip() or type(err).__name__
+    return DnsProviderError(f"网络错误：{detail}")
 
 
 class DnsProvider(ABC):

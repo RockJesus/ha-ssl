@@ -56,6 +56,12 @@ HOSTNAME_RE = re.compile(
 AUTO_VALUES = {"auto", "ip", "本机", "自动", ""}
 
 
+def _error_text(err: BaseException) -> str:
+    """Readable text for any exception; some (TimeoutError) stringify to ""."""
+    text = str(err).strip()
+    return text or type(err).__name__
+
+
 class DdnsError(Exception):
     """Raised when the public address cannot be determined."""
 
@@ -628,17 +634,19 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                     )
                 )
             except (DnsProviderError, DdnsError) as err:
+                reason = _error_text(err)
                 result = RecordResult(
-                    rtype=spec.rtype, name=spec.name, value=value, error=str(err)
+                    rtype=spec.rtype, name=spec.name, value=value, error=reason
                 )
-                errors.append(f"{spec.key}：{err}")
-                _LOGGER.warning("DDNS 处理 %s 失败：%s", spec.key, err)
+                errors.append(f"{spec.key}：{reason}")
+                _LOGGER.warning("DDNS 处理 %s 失败：%s", spec.key, reason)
             except Exception as err:  # noqa: BLE001 - keep the loop alive
+                reason = _error_text(err)
                 result = RecordResult(
-                    rtype=spec.rtype, name=spec.name, value=value, error=repr(err)
+                    rtype=spec.rtype, name=spec.name, value=value, error=reason
                 )
-                errors.append(f"{spec.key}：{err}")
-                _LOGGER.exception("DDNS 循环异常（%s）", spec.key)
+                errors.append(f"{spec.key}：{reason}")
+                _LOGGER.exception("DDNS 循环异常（%s）：%s", spec.key, reason)
             if result.pending:
                 state.pending.append(spec.key)
             state.results[spec.key] = result
@@ -664,17 +672,19 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                     try:
                         pruned = await self._async_prune_type(provider, rtype, name)
                     except (DnsProviderError, DdnsError) as err:
+                        reason = _error_text(err)
                         state.results[key] = RecordResult(
-                            rtype=rtype, name=name, error=str(err)
+                            rtype=rtype, name=name, error=reason
                         )
-                        errors.append(f"{key}：{err}")
+                        errors.append(f"{key}：{reason}")
                         continue
                     except Exception as err:  # noqa: BLE001 - keep the loop alive
+                        reason = _error_text(err)
                         state.results[key] = RecordResult(
-                            rtype=rtype, name=name, error=repr(err)
+                            rtype=rtype, name=name, error=reason
                         )
-                        errors.append(f"{key}：{err}")
-                        _LOGGER.exception("DDNS 清理异常（%s）", key)
+                        errors.append(f"{key}：{reason}")
+                        _LOGGER.exception("DDNS 清理异常（%s）：%s", key, reason)
                         continue
                     if pruned is None:
                         continue
