@@ -20,11 +20,14 @@ class DnsProviderError(Exception):
         message: str,
         payload: dict[str, Any] | None = None,
         code: str | None = None,
+        transient: bool = False,
     ) -> None:
         """Store the raw payload and vendor error code for diagnostics."""
         super().__init__(message)
         self.payload = payload or {}
         self.code = code
+        # True 表示"这次没问到答案"（超时/网络错），而不是云端确实不对。
+        self.transient = transient
 
 
 def describe_network_error(err: BaseException, timeout: float) -> DnsProviderError:
@@ -35,10 +38,11 @@ def describe_network_error(err: BaseException, timeout: float) -> DnsProviderErr
     """
     if isinstance(err, asyncio.TimeoutError):
         return DnsProviderError(
-            f"接口超时（{timeout:g} 秒未响应），请检查网络或稍后重试"
+            f"接口超时（{timeout:g} 秒未响应），请检查网络或稍后重试",
+            transient=True,
         )
     detail = str(err).strip() or type(err).__name__
-    return DnsProviderError(f"网络错误：{detail}")
+    return DnsProviderError(f"网络错误：{detail}", transient=True)
 
 
 class DnsProvider(ABC):

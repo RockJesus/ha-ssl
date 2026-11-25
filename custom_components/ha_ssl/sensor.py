@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -263,6 +264,22 @@ class DdnsRecordSensor(_DdnsBaseSensor):
         return self.ddns_state.results.get(self._spec.key) if self.ddns_state else None
 
     @property
+    def _fallback(self) -> dict[str, Any] | None:
+        """Last confirmed-good snapshot, used when a request just timed out."""
+        return self.ddns.last_healthy.get(self._spec.key)
+
+    @property
+    def _stale(self) -> bool:
+        """This cycle could not ask the provider, so the shown value is cached."""
+        result = self._result
+        return bool(
+            result
+            and result.transient
+            and result.error
+            and self._fallback
+        )
+
+    @property
     def url(self) -> str:
         """URL served through this record."""
         return f"{self._scheme}://{self._spec.name}:{self._port}"
@@ -274,6 +291,10 @@ class DdnsRecordSensor(_DdnsBaseSensor):
         if result is None:
             return "还没有同步结果"
         if result.error:
+            # 接口超时/网络错只是"这轮没问到答案"，不是云端真的不对：
+            # 保留上一轮健康值，只把原因记在 last_error。
+            if self._stale:
+                return None
             return result.error
         if result.deleted:
             return "云端没有这条记录"
@@ -309,8 +330,20 @@ class DdnsRecordSensor(_DdnsBaseSensor):
                 "scheme": self._scheme,
                 "healthy": reason is None,
                 "fault_reason": reason,
-                "cloud_value": result.previous if result else None,
-                "expected_value": result.value if result else None,
+                "stale": self._stale,
+                "cloud_value": (
+                    self._fallback.get("cloud_value")
+                    if self._stale and self._fallback
+                    else result.previous if result else None
+                ),
+                "expected_value": (
+                    self._fallback.get("value")
+                    if self._stale and self._fallback
+                    else result.value if result else None
+                ),
+                "last_healthy_at": (
+                    self._fallback.get("at") if self._fallback else None
+                ),
                 "changed": bool(result and result.changed),
                 "pending": bool(result and result.pending),
                 "deleted": bool(result and result.deleted),

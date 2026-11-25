@@ -93,6 +93,8 @@ class RecordResult:
     pending: bool = False
     deleted: bool = False
     error: str | None = None
+    # 传输层失败（超时/网络错）：本轮没拿到答案，不能据此判定云端不对。
+    transient: bool = False
 
 
 @dataclass
@@ -413,6 +415,9 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         self.managed_names = sorted(managed)
         self.record = (address_specs[0].name if address_specs else (self.specs[0].name if self.specs else domain))
         self._last_notified_error: str | None = None
+        # 每个记录键最后一次"确认健康"的结果，传输层失败时用它兜底，
+        # 避免一次接口超时就把实体翻成「故障」。
+        self._last_healthy: dict[str, dict[str, Any]] = {}
         self._last_pending_signature: tuple[str, ...] = ()
         self._history: list[dict[str, Any]] = []
 
@@ -536,6 +541,21 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             deleted=True,
         )
 
+    def _remember_healthy(self, key: str, result: RecordResult) -> None:
+        """Keep the last confirmed-good outcome so a timeout can fall back to it."""
+        if result.error or result.pending or result.deleted:
+            return
+        self._last_healthy[key] = {
+            "value": result.value,
+            "cloud_value": result.previous,
+            "at": dt_util.utcnow().isoformat(),
+        }
+
+    @property
+    def last_healthy(self) -> dict[str, dict[str, Any]]:
+        """Per-record last confirmed-good snapshot."""
+        return self._last_healthy
+
     def _remember_change(self, key: str, result: RecordResult) -> None:
         """Record one change and announce it."""
         entry = {
@@ -577,6 +597,9 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
         state.results = {}
         state.pending = []
         errors: list[str] = list(self._spec_errors)
+        # 只属于"这次没问到"的错误：保留上一轮健康值，不弹通知。
+        probe_errors: list[str] = []
+        notify_errors: list[str] = list(self._spec_errors)
         changed = False
         provider = self._async_provider()
         write = self.auto_sync or force_write
@@ -598,7 +621,8 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             state.source = None
             state.ipv4_ok = False
             if needs_v4:
-                errors.append(f"公网 IPv4：{err}")
+                errors.append(f"公网 IPv4：{_error_text(err)}")
+                probe_errors.append(f"公网 IPv4：{_error_text(err)}")
         try:
             ip6, source6 = await async_get_public_ip(self._session, 6)
             state.public_ipv6 = ip6
@@ -609,7 +633,8 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             state.source_v6 = None
             state.ipv6_ok = False
             if needs_v6:
-                errors.append(f"公网 IPv6：{err}")
+                errors.append(f"公网 IPv6：{_error_text(err)}")
+                probe_errors.append(f"公网 IPv6：{_error_text(err)}")
 
         for spec in self.specs:
             value = spec.value
@@ -620,7 +645,7 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                         "拿不到公网 IPv4" if spec.rtype == "A" else "拿不到公网 IPv6"
                     )
                     state.results[spec.key] = RecordResult(
-                        rtype=spec.rtype, name=spec.name, error=message
+                        rtype=spec.rtype, name=spec.name, error=message, transient=True
                     )
                     continue
             try:
@@ -635,20 +660,37 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                 )
             except (DnsProviderError, DdnsError) as err:
                 reason = _error_text(err)
+                transient = getattr(err, "transient", False) or isinstance(
+                    err, DdnsError
+                )
                 result = RecordResult(
-                    rtype=spec.rtype, name=spec.name, value=value, error=reason
+                    rtype=spec.rtype,
+                    name=spec.name,
+                    value=value,
+                    error=reason,
+                    transient=transient,
                 )
                 errors.append(f"{spec.key}：{reason}")
+                if transient:
+                    probe_errors.append(f"{spec.key}：{reason}")
+                else:
+                    notify_errors.append(f"{spec.key}：{reason}")
                 _LOGGER.warning("DDNS 处理 %s 失败：%s", spec.key, reason)
             except Exception as err:  # noqa: BLE001 - keep the loop alive
                 reason = _error_text(err)
                 result = RecordResult(
-                    rtype=spec.rtype, name=spec.name, value=value, error=reason
+                    rtype=spec.rtype,
+                    name=spec.name,
+                    value=value,
+                    error=reason,
+                    transient=True,
                 )
                 errors.append(f"{spec.key}：{reason}")
+                probe_errors.append(f"{spec.key}：{reason}")
                 _LOGGER.exception("DDNS 循环异常（%s）：%s", spec.key, reason)
             if result.pending:
                 state.pending.append(spec.key)
+            self._remember_healthy(spec.key, result)
             state.results[spec.key] = result
             if result.changed:
                 changed = True
@@ -673,17 +715,27 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
                         pruned = await self._async_prune_type(provider, rtype, name)
                     except (DnsProviderError, DdnsError) as err:
                         reason = _error_text(err)
+                        transient = getattr(err, "transient", False) or isinstance(
+                            err, DdnsError
+                        )
                         state.results[key] = RecordResult(
-                            rtype=rtype, name=name, error=reason
+                            rtype=rtype,
+                            name=name,
+                            error=reason,
+                            transient=transient,
                         )
                         errors.append(f"{key}：{reason}")
+                        (probe_errors if transient else notify_errors).append(
+                            f"{key}：{reason}"
+                        )
                         continue
                     except Exception as err:  # noqa: BLE001 - keep the loop alive
                         reason = _error_text(err)
                         state.results[key] = RecordResult(
-                            rtype=rtype, name=name, error=reason
+                            rtype=rtype, name=name, error=reason, transient=True
                         )
                         errors.append(f"{key}：{reason}")
+                        probe_errors.append(f"{key}：{reason}")
                         _LOGGER.exception("DDNS 清理异常（%s）：%s", key, reason)
                         continue
                     if pruned is None:
@@ -705,8 +757,10 @@ class DdnsCoordinator(DataUpdateCoordinator[DdnsState]):
             self._last_pending_signature = ()
         if errors:
             _LOGGER.warning("DDNS 检查存在失败项：%s", state.last_error)
-            self._async_notify_error(state.last_error)
+        if notify_errors:
+            self._async_notify_error("；".join(notify_errors))
         else:
+            # 纯网络/超时失败不弹通知，下一轮自动重试即可。
             self._last_notified_error = None
         return state
 
